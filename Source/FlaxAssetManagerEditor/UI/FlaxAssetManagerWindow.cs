@@ -73,6 +73,10 @@ namespace FlaxAssetManager.UI
         // an IndexEntry, not a PackEntry, and those rows live in their own list.
         private IndexEntry _selectedIndexEntry;
         private bool _listIsIndex;
+        // A source added from an index entry is a status-line event, not a modal. The add is noted here
+        // because the refresh that follows takes the status bar with its busy text right away, so the
+        // note is replayed once by OnFetchedMainThread, after that source has been fetched.
+        private string _pendingSourceNote;
         private readonly List<(IndexEntry entry, AssetManagerListRow row)> _indexRowItems = new List<(IndexEntry, AssetManagerListRow)>();
         private FlatButton _addLinkedSourceButton;
         // Clickable upstream-site link in the details panel (manifest `website`, falling back to
@@ -865,6 +869,9 @@ namespace FlaxAssetManager.UI
         private void OnFetchedMainThread()
         {
             _currentSources = _sourceManager.LastFetched.ToList();
+            // Replay a pending "added source" note once, here, now that its first fetch has finished.
+            var addedNote = string.IsNullOrEmpty(_pendingSourceNote) ? string.Empty : $"{_pendingSourceNote}: ";
+            _pendingSourceNote = null;
             _sourceCombo.ClearItems();
             foreach (var s in _currentSources)
             {
@@ -890,7 +897,7 @@ namespace FlaxAssetManager.UI
                 _assetCountHeader.Text = "Assets (0)";
                 RebuildAssetList();
                 if (_statusBar != null)
-                    _statusBar.SetStatus("No sources configured. Click Add URL.");
+                    _statusBar.SetStatus($"{addedNote}No sources configured. Click Add URL.");
                 return;
             }
 
@@ -906,7 +913,8 @@ namespace FlaxAssetManager.UI
             {
                 var ok = _currentSources.Count(s => s.Success);
                 var fail = _currentSources.Count - ok;
-                _statusBar.SetStatus(fail == 0 ? $"Fetched {ok} source(s). Select an asset to install." : $"Fetched {ok} OK, {fail} failed. See log.");
+                var fetched = fail == 0 ? $"Fetched {ok} source(s). Select an asset to install." : $"Fetched {ok} OK, {fail} failed. See log.";
+                _statusBar.SetStatus($"{addedNote}{fetched}");
             }
         }
 
@@ -1121,7 +1129,8 @@ namespace FlaxAssetManager.UI
         /// <summary>
         /// Adds the selected index entry's URL as a source. The scheme and duplicate-URL checks mirror
         /// the Add URL popup; a sourceId collision is refused, because sourceId keys the install record
-        /// and two sources sharing one would silently merge their records.
+        /// and two sources sharing one would silently merge their records. Success is a status-line note
+        /// plus the refresh it triggers, not a modal - a modal is reserved for the refusals above.
         /// </summary>
         private void OnAddLinkedSourceClicked()
         {
@@ -1152,7 +1161,10 @@ namespace FlaxAssetManager.UI
                 return;
             }
             _settings.AddSource(url);
-            MessageBox.Show($"Added as a source:\n{url}\n\nIt is fetched on the next refresh.", "Add linked source", MessageBoxButtons.OK);
+            // No modal: the refresh below is the proof the add worked. The note is replayed on the
+            // status bar by OnFetchedMainThread, after the busy text of this refresh has cleared.
+            Debug.Log($"FlaxAssetManager: added linked source '{entry.SourceId}' ({url})");
+            _pendingSourceNote = $"Added '{entry.SourceId}' as a source";
             RefreshSourcesAsync(force: true);
         }
 

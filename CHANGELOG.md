@@ -43,6 +43,15 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
 
 ### Changed
 
+* **Adding a source reports in the status bar, not in a modal** — **Add linked source** confirmed the add
+  with a `MessageBox`. On Linux that is the engine's platform message box, and Flax's SDL path only
+  forwards the icon argument (`SDLPlatform.Linux.cpp`): the 3-arg `MessageBox.Show` the plugin called
+  passes `MessageBoxIcon::None`, so the dialog arrived with a caution triangle the plugin never asked
+  for, in the desktop theme, unparented to the window, and blocking the refresh that was the actual proof
+  the add worked. It is now a `Debug.Log` plus a one-shot status note (`_pendingSourceNote`, replayed by
+  `OnFetchedMainThread` once that source's first fetch has finished) — the shape **Add URL** already
+  used, so both adds report identically. The refusals (missing/non-http URL, duplicate URL, `sourceId`
+  collision) and the destructive confirms keep their modals, where an alert icon is honest.
 * **`PRD.md` is product intent, not a spec.** Its schema, file map, enum lists, install-flow sections,
   build commands and *future work* list are removed in favour of `docs/MANIFEST_SPEC.md` + `AGENTS.md`,
   which is what made those sections rot. The header states the precedence, and the doc-status notes in

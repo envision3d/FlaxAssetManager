@@ -430,7 +430,8 @@ Decisions baked in:
   authority — do not reintroduce JSON-level `Required` for fields whose rules depend on the manifest kind.
 * UI: index rows in the asset list (`RebuildIndexList`), an index-specific details panel
   (`SelectIndexEntry`) and **Add linked source** (`OnAddLinkedSourceClicked`); pack actions hide while an
-  index is selected, and arrow-key navigation follows whichever list is showing (`_listIsIndex`).
+  index is selected, and arrow-key navigation follows whichever list is showing (`_listIsIndex`). The add
+  itself reports in the status bar (`_pendingSourceNote`), like **Add URL** does, not in a modal.
 
 Deliberately not done: searching across linked manifests, "add all entries", and any weighting of entries
 hosted on the index's own domain. Each buys convenience at the cost of trust-parsing the index does not need.
