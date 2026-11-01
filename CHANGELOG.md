@@ -85,6 +85,20 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
   pulled code back to them twice.
 
 ### Fixed
+* **A generated material renders as soon as it is created** — installing a texture pack built the material
+  and assigned it to the pack's models, but it rendered **pure black** until the user reloaded it by hand in
+  the Content browser. `Material.SaveSurface` writes the asset; what the renderer binds is the *loaded*
+  material, and the material generator produces its shader, its public parameters and its
+  `MaterialInfo.UsageFlags` only during asset load — so a material created in the running session kept the
+  engine's default graph: no parameters, `UsageFlags = None`, nothing feeding BaseColor.
+  The plugin's one surface writer (`MaterialGraphBuilder.MaterialSurfaceOwner.SurfaceData`) now saves and
+  then reloads the asset — waiting for the load, and throwing if either step fails so the install reports it —
+  the same shape as the stock material editor's window. Install, `Rebuild material` and a reinstall over an
+  existing material all write surface data through it, so the cases where the asset is already in memory are
+  fixed by the same rule. Measured in a live editor against an installed texture pack: with the reload taken
+  out the loaded material reports no parameters and `UsageFlags = None`; with it, the checks are clean (D17).
+* **`Core/Tests/MaterialReadyE2ETest.cs`** — a live-editor check that the graph the plugin saved is the graph
+  the loaded material shows (runtime gate `FLAX_AM_MATERIAL_E2E=1`), so this regression cannot slip back in.
 * **`Update Plugin` finds its own folder, and stops assuming its name** — the button resolved the plugin's
   folder by walking up from the running assembly to a file named `FlaxAssetManager.flaxproj`, falling back to
   `Plugins/FlaxAssetManager`. That is an assumed folder name, and the manager's own `pluginProject` install

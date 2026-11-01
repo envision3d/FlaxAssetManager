@@ -42,6 +42,7 @@ Source/FlaxAssetManagerEditor/Core/Utils/MaterialGraphBuilder.cs # creates the m
   ContentDatabaseUtils.cs # content-folder refresh + lookups shared by install/import/material
   SystemFileOpener.cs     # open Sources.json in the OS editor (detached, non-blocking); refuses paths outside the project and shell-executable extensions
 Source/FlaxAssetManagerEditor/Core/Tests/VariantE2ETest.cs # live-editor E2E (manifest→install→material); run with FLAX_AM_E2E=1, hooked in FlaxAssetManagerEditor.cs:53
+Source/FlaxAssetManagerEditor/Core/Tests/MaterialReadyE2ETest.cs # live-editor material-readiness E2E (installed pack → saved graph reaches the loaded material); run with FLAX_AM_MATERIAL_E2E=1, D17
 Source/FlaxAssetManagerEditor/UI/FlaxAssetManagerWindow.cs # EditorWindow hideOnClose:true (~2.3k lines, pixel-positioned layout, previews + variants inline; index manifests via RebuildIndexList/SelectIndexEntry/OnAddLinkedSourceClicked). Action buttons are one Install + one Remove, all state from the record via RefreshActionButtons; install builds the material when HasMaterialTextures
 Source/FlaxAssetManagerEditor/UI/AssetManagerListRow.cs, UI/ImageView.cs # pack row template; async image loading
 EKEditorUIKit/                       # vendored sibling plugin project (the FlatButton/TextLabel/Dropdown/panel toolkit the window uses)
@@ -270,6 +271,13 @@ python3 -m http.server --directory Plugins/FlaxAssetManager 8899
 # hardcoded:
 #   python3 -m http.server --directory <dir-with-a-variants-manifest> 8899
 #   → Add URL http://localhost:8899/<that-manifest>.json, then run the editor with FLAX_AM_E2E=1
+# Material-readiness E2E (Core/Tests/MaterialReadyE2ETest.cs; runtime gate FLAX_AM_MATERIAL_E2E=1) needs an
+# editor session with at least one source configured and one installed asset pack that ships material
+# textures (install one through the window first). It rebuilds that pack's material, reads the LOADED asset
+# back with no reload in between, and asserts the saved graph is what the loaded material shows - the
+# black-material regression of D17. It rewrites that pack's material twice (probe, restore):
+#   <editor> -project=<project> -headless -SkipCompile   (headless is enough; the check is engine state)
+#   env FLAX_AM_MATERIAL_E2E=1 → look for "material E2E done: N passed, M failed" in the editor log
 ```
 
 No native code (`BuildNativeCode=false` both modules); pure C#; Newtonsoft.Json via `FlaxEngine.CSharp.dll` (Editor module pulls `Editor`).
@@ -303,6 +311,7 @@ No native code (`BuildNativeCode=false` both modules); pure C#; Newtonsoft.Json 
 - Expecting a build symbol to gate plugin C#: on stock 1.13 there is **no** C# preprocessor-define path for plugin modules (`ScriptingAPI.Defines` in `Module.Setup` does not reach the plugin assembly; `Target.GlobalDefinitions` is native-only). Gate dev-only code at runtime (see `FLAX_AM_E2E` and D4).
 - Naming a specific asset source, manifest, pack id, variant id or URL in code, tests or docs — the plugin and its E2E harness are source-agnostic by policy.
 - Dropping the **"installs code" gate** (`PackInstallsCode` / `ConfirmCodeInstall` in the window): any pack that lands *compiled* code — `Script` files, a `pluginProject` clone — must warn and confirm first. A new pack type, destination or file type that ends up compiled needs the same gate, otherwise the trust story has a hole (see `docs/DECISIONS.md` D12).
+- Writing a material's surface data **without reloading the asset**. `Material.SaveSurface` writes the file and the asset's chunks; the loaded material's shader, public parameter table and `MaterialInfo.UsageFlags` are produced by the material generator during **asset load**. A saved graph is therefore invisible to the renderer until the asset is reloaded, and a material created in the running session keeps the engine's default graph — a pure black surface with no parameters (the bug report). `MaterialGraphBuilder.MaterialSurfaceOwner.SurfaceData` is the plugin's one writer and does save → `Reload` → `WaitForLoaded`, throwing on failure so the install reports it; route every new surface write through it (`docs/DECISIONS.md` D17), guarded by `Core/Tests/MaterialReadyE2ETest.cs` (`FLAX_AM_MATERIAL_E2E=1`). `Asset.WaitForLoaded()` returns **true on failure**.
 - Naming the plugin's own folder in a path. The manager's `pluginProject` install names a cloned folder from
   the git URL, users rename folders, and forks rename projects, so `Plugins/FlaxAssetManager` is documentation,
   not an identity: resolve this plugin by its project file — file name, or the `Name` inside it — through

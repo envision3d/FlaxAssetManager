@@ -46,6 +46,12 @@ namespace FlaxAssetManager.Core.Services
     /// are exposed and fed to every <c>Sample Texture</c> node's UVs input as
     /// <c>UV * UV Scale + UV Tiling</c>, so all texture sampling can be scaled and offset at once.
     ///
+    /// Every surface graph write is followed by an asset <c>Reload</c> + <c>WaitForLoaded</c>, performed by
+    /// <c>MaterialGraphBuilder.MaterialSurfaceOwner.SurfaceData</c>: <c>Material.SaveSurface</c> only writes
+    /// the asset file, so without that reload a material this service has just built keeps the shader of the
+    /// graph that was on disk before the write — the empty default one — and renders pure black until the
+    /// user reloads the asset by hand in the content browser.
+    ///
     /// The service is defensive: it always creates the material asset, wires as many textures as
     /// it can match by name, and logs every step so a mismatch can be diagnosed in the editor.
     ///
@@ -535,10 +541,12 @@ namespace FlaxAssetManager.Core.Services
                 if (!WireUvTransforms(context, uvConsumers))
                     return false;
 
-                // Save() returns true on failure, and the surface owner's setter throws when the
-                // asset write itself fails. Both must be reported as a clean failure here: the
-                // material asset already exists on disk, and an unhandled exception would escape
-                // into the UI with the graph half-rewired.
+                // Save() returns true on failure; the surface owner's setter throws when the asset write
+                // fails, and reloads the asset after saving it so the in-memory material is the graph that
+                // was just written (SaveSurface alone leaves the previous shader in place - see
+                // MaterialGraphBuilder.MaterialSurfaceOwner.SurfaceData). All of it must be reported as a
+                // clean failure here: the material asset already exists on disk, and an unhandled exception
+                // would escape into the UI with the graph half-rewired.
                 try
                 {
                     if (surface.Save())

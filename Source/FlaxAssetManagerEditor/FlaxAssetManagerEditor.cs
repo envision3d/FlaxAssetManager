@@ -51,6 +51,11 @@ namespace FlaxAssetManagerEditor
             // See docs/DECISIONS.md D4.
             if (System.Environment.GetEnvironmentVariable("FLAX_AM_E2E") == "1")
                 Task.Run(() => VariantE2ETest.RunAll(this));
+
+            // The material-readiness check (Core/Tests/MaterialReadyE2ETest.cs) is gated separately so it can
+            // be run on its own, without the variant harness reinstalling packs over the network.
+            if (System.Environment.GetEnvironmentVariable("FLAX_AM_MATERIAL_E2E") == "1")
+                Task.Run(() => MaterialReadyE2ETest.RunAll(this));
         }
 
         private void OnEditorInitEnd()

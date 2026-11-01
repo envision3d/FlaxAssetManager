@@ -590,3 +590,58 @@ resolution, and no "update available" badge for the plugin itself (the `.install
 packs, and the plugin is not a pack). Native code is out of scope: both modules are `BuildNativeCode=false`,
 so a scripts rebuild is the whole job — a future native plugin would need an editor restart, and the button
 would have to say so.
+## D17 — Saving a material surface must reload the asset · **resolved**
+
+A pack install that generated a material produced an asset that rendered **pure black** until the user
+reloaded it by hand in the Content browser. The surface graph was right — the file on disk proves it —
+and the material the window assigned to the pack's models was the right asset. What was missing is the
+half of a material the plugin never touched.
+
+`Material.SaveSurface` **writes the asset**: it replaces the file and the asset's chunks and asks for the
+shader to compile. The parts of a material the renderer binds — the compiled shader, the public parameter
+table (`Material.Parameters`), the `MaterialInfo.UsageFlags` that decide which inputs exist at all — are
+produced by the material generator during **asset load**. A material this plugin created in the running
+session was loaded once, before the graph existed, so its loaded half is the engine's default graph:
+no parameters, `UsageFlags = None`, nothing feeding BaseColor — a black surface. The file is correct; the
+in-memory asset that gets rendered is not. Reloading re-enters the load path, which is exactly why the
+content browser's Reload entry makes the material appear.
+
+**Resolved: the plugin's surface owner saves and then reloads** —
+`Core/Utils/MaterialGraphBuilder.cs`, `MaterialSurfaceOwner.SurfaceData` setter: `SaveSurface(surface, Info)`
+→ `Asset.Reload()` → `Asset.WaitForLoaded()`, and a failed save or a failed load throws so the install
+reports the material as failed instead of shipping a black one. The setter is the plugin's **only** way to
+write surface data — the graph builder and `MaterialCreatorService` both go through it — so the rule lives
+where every path, including the "Rebuild material" button and a reinstall over an existing material, has to
+obey it. Those rebuild cases are the sharper version of the bug: there the asset is already loaded, and
+without the reload the saved graph never reaches the asset at all.
+
+This mirrors what the stock editor does. `FlaxEditor/Windows/Assets/MaterialWindow.cs` — the window behind
+the content browser's Material editor — has the same shape in its `SurfaceData` setter: save, then reload,
+then wait. Nothing here is engine-private: `SaveSurface`, `Reload` and `WaitForLoaded` are public on
+`Asset`/`Material` in the 1.13 release assembly, which is what the `compat/` build compiles against (D1's
+guardrail). Note `WaitForLoaded` returns **true on failure**, which reads backwards the first time and is
+checked as such in code.
+
+**Measured, not assumed.** `Core/Tests/MaterialReadyE2ETest.cs` (runtime gate `FLAX_AM_MATERIAL_E2E=1`, same
+dev-gate policy as D4) runs inside a live editor against the first installed texture pack of the configured
+sources, and reads the **loaded** material with no reload in between: registered, loads, is a surface, and
+exposes the parameter table and usage flags the saved graph implies, on every model slot of the pack. Step 5
+is the regression pin: it rebuilds the pack's material through the plugin's build path with the multiplier
+parameters switched off and requires the loaded material to stop exposing `Color` / `NormalStrength`.
+Run against an installed pack with the reload taken back out, that harness reported the loaded material with
+**no parameters and `UsageFlags = None`** — the black material, stated in the engine's own terms — and with
+the reload in place the same run is clean (7 passed / 7 failed → 14 passed / 0 failed). `Skip` covers a
+machine with no source configured; every expectation is derived from the pack's own files (no source, vendor,
+pack, variant or URL is named — the standing rule).
+
+Rejected: `WaitForLoaded` alone, or a refresh of the asset info (neither re-enters the load path, so the
+loaded half stays on the old graph); `Content.Unload` + reload (that is the asset's own `Reload` with extra
+steps and a lost reference for anything holding the asset); a post-install "Reload all" pass over the pack's
+assets (a window in which every material of the pack renders black, and the rebuild path has no such pass);
+telling users to reload by hand; an engine-side fix in `SaveSurface` (D1's guardrail — plugin policy stays in
+the plugin, and the stock material editor already reloads, so the engine is not the one missing a step).
+
+**Remaining:** the reload is a synchronous asset load on the main thread, so a pack with many materials pays
+one load per material inside the install (visible as install duration, not as a stall in the window); a
+material the user edits in the material window afterwards is the engine's business, and this setter is not
+involved there.

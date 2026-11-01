@@ -67,6 +67,13 @@ namespace FlaxAssetManager.Core.Utils
     /// <c>MaterialCreatorService.InsertSamplingNodes</c>, which then routes every texture through a
     /// <c>Sample Texture</c> node and adds the shared UV transform.
     ///
+    /// Both surface writes <b>apply</b> what they saved: <see cref="Material.SaveSurface"/> only writes
+    /// the asset file, so <see cref="MaterialSurfaceOwner.SurfaceData"/> follows it with
+    /// <see cref="Asset.Reload()"/> + <see cref="Asset.WaitForLoaded(double)"/> — the same pair the
+    /// engine's material editor performs. Without that pair a freshly created material keeps the shader of
+    /// the graph that was on disk before the write (the empty default one) and renders pure black until
+    /// something reloads the asset.
+    ///
     /// Must run on the editor's main thread: <see cref="SurfaceNode"/> instances are editor GUI
     /// controls and the asset/content APIs used here are not thread-safe.
     /// </summary>
@@ -517,6 +524,10 @@ namespace FlaxAssetManager.Core.Utils
         /// Minimal <see cref="IVisjectSurfaceOwner"/> that lets a material asset's surface be loaded,
         /// edited and saved without the material editor window (headless graph editing on the
         /// editor's main thread).
+        /// <para>
+        /// Writing <see cref="SurfaceData"/> also <b>applies</b> the graph: saving the surface file is
+        /// not enough to make the saved material render, see the setter.
+        /// </para>
         /// </summary>
         public sealed class MaterialSurfaceOwner : IVisjectSurfaceOwner
         {
@@ -543,6 +554,27 @@ namespace FlaxAssetManager.Core.Utils
                     // SaveSurface returns true on failure.
                     if (_material.SaveSurface(value, _material.Info))
                         throw new InvalidOperationException($"Failed to save the surface data of material '{_material}'.");
+
+                    // Saving the surface file does NOT apply the graph, and this is the step that makes a
+                    // freshly built material render. The engine's Material::SaveSurface releases the
+                    // asset's chunks, overwrites the on-disk MaterialInfo, drops the shader cache and
+                    // returns; the loaded asset keeps the MaterialShader it was built with, which the
+                    // material generator produced from the graph that was on disk BEFORE this write. The
+                    // in-memory material is therefore a new graph and a new MaterialInfo bound to a shader
+                    // that knows none of the new graph's parameters (Color, EmissiveColor, NormalStrength,
+                    // UV Scale, UV Tiling), so the parameters it exposes are never bound and the surface
+                    // renders pure black. The engine's own material editor closes that gap in this same
+                    // setter - FlaxEditor/Windows/Assets/MaterialWindow.cs, SurfaceData setter: SaveSurface,
+                    // then Reload, then WaitForLoaded - and the content browser's asset context-menu
+                    // "Reload" entry is the same Asset.Reload, which is exactly why a hand-reloaded
+                    // material of this plugin starts to render.
+                    _material.Reload();
+
+                    // Reload queues an asynchronous re-load: the shader for the new graph exists only once
+                    // it finishes, and callers read the asset straight after (the service reloads it by id
+                    // to assign it to the pack's models). WaitForLoaded returns true when the load FAILED.
+                    if (_material.WaitForLoaded())
+                        throw new InvalidOperationException($"Failed to reload material '{_material}' after saving its surface data.");
                 }
             }
 
