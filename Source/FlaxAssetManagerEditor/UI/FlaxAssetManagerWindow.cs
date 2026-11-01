@@ -29,6 +29,7 @@ namespace FlaxAssetManager.UI
         private readonly AssetSourceManager _sourceManager;
         private readonly AssetInstallerService _installer;
         private readonly MaterialCreatorService _materialService;
+        private readonly PluginUpdateService _pluginUpdater;
 
         private Panel _root;
         private Panel _topBar;
@@ -41,6 +42,7 @@ namespace FlaxAssetManager.UI
         private Button _editSourceButton;
         private Button _removeSourceButton;
         private Button _editListFileButton;
+        private Button _updatePluginButton;
         private TextBox _searchBox;
         private Dropdown _typeFilter;
         private LabeledCheckBox _installedOnly;
@@ -91,6 +93,9 @@ namespace FlaxAssetManager.UI
         private CancellationTokenSource _refreshCts;
         private CancellationTokenSource _installCts;
         private CancellationTokenSource _installMaterialCts;
+        // Self-update (git pull + scripts recompile) keeps its own token, cancelled on close like every
+        // other in-flight operation.
+        private CancellationTokenSource _updateCts;
         // Fetch completes on a thread-pool thread; GUI updates are queued to the next main-thread OnUpdate.
         private int _fetchedPending;
         private int _refreshCleanupPending;
@@ -129,6 +134,7 @@ namespace FlaxAssetManager.UI
             _sourceManager = sourceManager;
             _installer = installer;
             _materialService = new MaterialCreatorService(settings);
+            _pluginUpdater = new PluginUpdateService();
             _sourceManager.Fetched += OnFetched;
             _previewHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
             _audioHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
@@ -229,6 +235,15 @@ namespace FlaxAssetManager.UI
                 Bounds = new Rectangle(674, 7, 84, 22),
             };
             _editListFileButton.Clicked += OnEditListFileClicked;
+
+            _updatePluginButton = new FlatButton("Update Plugin")
+            {
+                TooltipText = "Update this plugin in place: 'git pull --ff-only' in Plugins/FlaxAssetManager, then a scripts recompile so the editor loads the new code. A confirm dialog states both steps, and a checkout with local changes is left untouched.",
+                Parent = _topBar,
+                AnchorPreset = AnchorPresets.TopLeft,
+                Bounds = new Rectangle(764, 7, 108, 22),
+            };
+            _updatePluginButton.Clicked += OnUpdatePluginClicked;
 
             // Row 2
             _searchBox = new TextBox
@@ -743,6 +758,116 @@ namespace FlaxAssetManager.UI
             Debug.Log($"FlaxAssetManager: opened source list '{path}' in the system editor.");
             if (_statusBar != null)
                 _statusBar.SetStatus($"Opened {Path.GetFileName(path)} in the system editor - click Refresh to apply changes.");
+        }
+
+        /// <summary>
+        /// Updates the plugin itself: <c>git pull</c> in its own folder, then a scripts recompile so the
+        /// editor loads the new code (the plugin's assemblies are built by Flax, not shipped in git, so a
+        /// pulled source tree only takes effect after a rebuild). The confirm names both steps, because the
+        /// second one reloads the plugin's assemblies out from under the running editor — the scripts reload
+        /// disposes this window, which is why the tail below expects <c>IsDisposing</c>.
+        /// <para>
+        /// Every refusal (not a git checkout, dirty tree, detached HEAD, no upstream, diverged branch) comes
+        /// from the service before anything is written, and keeps a modal: each one names something the user
+        /// has to fix in git, which a status-bar line would hide (see the status-bar/modal split in the
+        /// changelog). Success reports in the status bar.
+        /// </para>
+        /// </summary>
+        private async void OnUpdatePluginClicked()
+        {
+            // Resolve the folder before asking, so the confirm can name exactly what gets written to.
+            if (!PluginUpdateService.TryResolvePluginFolder(out var folder, out var resolveError))
+            {
+                MessageBox.Show(resolveError, "Update plugin", MessageBoxButtons.OK);
+                return;
+            }
+
+            var display = PluginUpdateService.DisplayFolder(folder);
+            var confirm =
+                "Update Flax Asset Manager?\n\n" +
+                $"1. 'git pull --ff-only' runs in '{display}'.\n" +
+                "2. If that changed any files, the editor is asked to recompile the project scripts, which rebuilds and reloads this plugin's code.\n\n" +
+                "Save your work first - a scripts reload rebuilds the editor's plugin assemblies. Nothing is pulled into a checkout with local changes, a detached HEAD, no upstream branch, or a branch that has diverged from its remote; that case is reported and the folder is left alone.\n\n" +
+                "Continue?";
+            if (MessageBox.Show(confirm, "Update Flax Asset Manager", MessageBoxButtons.YesNo) != DialogResult.Yes)
+                return;
+
+            // One update at a time, and closing the window aborts the pull (OnDestroy cancels this token).
+            _updateCts?.Cancel();
+            var cts = _updateCts = new CancellationTokenSource();
+            var token = cts.Token;
+            if (_updatePluginButton != null)
+                _updatePluginButton.Enabled = false;
+            if (_statusBar != null)
+            {
+                _statusBar.SetBusy($"Updating {display} (git pull)...");
+                _statusBar.SetProgress(0.3f);
+            }
+
+            PluginUpdateService.Result result = null;
+            string error = null;
+            try
+            {
+                result = await _pluginUpdater.UpdateAsync(token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Closed mid-flight; the window is going away, so there is nothing to report.
+                return;
+            }
+            catch (Exception e)
+            {
+                error = e.Message;
+                Debug.LogError($"FlaxAssetManager: self-update failed: {e.Message}");
+            }
+
+            // UpdateAsync resumes on a thread-pool thread (the engine sets no SynchronizationContext), and
+            // everything below is GUI state — one hop back, the shape every other operation here uses. After
+            // a recompile request the scripts reload disposes this window, so the IsDisposing exit is the
+            // normal ending of a successful update, not a failure.
+            await MainThreadDispatcher.RunOnMain(() =>
+            {
+                if (IsDisposing)
+                    return;
+                if (_updatePluginButton != null)
+                    _updatePluginButton.Enabled = true;
+                if (_statusBar != null)
+                {
+                    _statusBar.SetIdle();
+                    if (error != null)
+                        _statusBar.SetStatus($"Error: {error}");
+                    else if (result != null)
+                        _statusBar.SetStatus(FirstLine(result.Message));
+                }
+
+                if (result == null)
+                    return;
+
+                // git's own words go to the log, capped: the status bar has one line and a modal is the
+                // user's channel, so a long pull transcript does not become a dialog wall.
+                if (!string.IsNullOrEmpty(result.Detail))
+                    Debug.Log($"FlaxAssetManager: self-update git output:\n{Truncate(result.Detail, 4000)}");
+
+                if (!result.Okay)
+                    MessageBox.Show(result.Message, "Update Flax Asset Manager", MessageBoxButtons.OK);
+            });
+        }
+
+        /// <summary>First line of a multi-line message, for the one-line status bar.</summary>
+        private static string FirstLine(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+            var idx = text.IndexOf('\n');
+            return idx < 0 ? text : text.Substring(0, idx);
+        }
+
+        /// <summary>Caps a block of log text, naming how much was dropped.</summary>
+        private static string Truncate(string text, int maxChars)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length <= maxChars)
+                return text;
+            return text.Substring(0, maxChars) + $"\n... truncated {text.Length - maxChars:N0} chars (see your git tooling for the full output).";
         }
 
         /// <summary>
@@ -2296,16 +2421,18 @@ namespace FlaxAssetManager.UI
         public override void OnDestroy()
         {
             // Cancel every in-flight flow — the material token was never cancelled, and none of the
-            // four were released. Pending continuations check IsDisposing and skip their GUI updates.
+            // five were released. Pending continuations check IsDisposing and skip their GUI updates.
             _refreshCts?.Cancel();
             _installCts?.Cancel();
             _installMaterialCts?.Cancel();
             _previewCts?.Cancel();
+            _updateCts?.Cancel();
             StopPreview();
             _refreshCts?.Dispose();
             _installCts?.Dispose();
             _installMaterialCts?.Dispose();
             _previewCts?.Dispose();
+            _updateCts?.Dispose();
             _audioHttpClient?.Dispose();
             _sourceManager.Fetched -= OnFetched;
             _previewHttpClient?.Dispose();

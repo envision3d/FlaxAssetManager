@@ -56,6 +56,7 @@ P/Invoke is absent). Keep them passing when you touch the code they cover:
 | manifest validation | shipped `example_manifest.json` / `example_index.json` still pass `ValidateManifest`; duplicate `packId` rejected; `..` path forms (including the legitimate `brick..png`) |
 | destination/path checks | `SettingsService.IsValidDestination` and `AssetSourceManager.SanitizeDestination` reject absolute, drive-rooted, traversal, `~`, UNC and `.`-segment paths |
 | network | `HttpStream` refuses an oversize body by declared length and by counted bytes; retries 503/429 up to `MaxAttempts`; honours `Retry-After`; sends `If-None-Match` and reports 304; does **not** retry 404 |
+| git self-update | the update sequence against a real git: `pull --ff-only` fast-forwards a clean checkout and is idempotent when already up to date; a dirty tree, a detached HEAD (`symbolic-ref -q HEAD` → 1) and a missing upstream (`rev-parse --abbrev-ref @{u}` → 128) are detectable **before** any write; a diverged branch exits non-zero and rewrites nothing (HEAD and local commits intact); a folder argument starting with `-` reaches git as a path through `ArgumentList`; a timed-out or cancelled git is killed with its process tree (no hook child survives) |
 
 Serve the examples over a local `HttpListener` for these — no public endpoint, and the retry/ETag cases
 need a server that can be told to fail.

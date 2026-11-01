@@ -32,9 +32,11 @@ Source/FlaxAssetManagerEditor/Core/Services/
   AssetSourceManager.cs     # HttpClient 30s, ValidateManifest (STRICT) + ValidateIndex (index manifests)
   AssetInstallerService.cs  # SemaphoreSlim(6), SHA256, git clone into staging, zip extract (entry-name rule), reference injection; uninstall deletes files[] + generatedAssets + imported sidecars, then prunes the pack folder
 Source/FlaxAssetManagerEditor/Core/Services/MaterialCreatorService.cs # PBR role detection + surface-graph rewiring + model slot assignment (stock API, engine calls marshalled to the main thread); records the created M_<packId>.flax on the install entry (RecordGeneratedAsset)
+Source/FlaxAssetManagerEditor/Core/Services/PluginUpdateService.cs # self-update: git pull --ff-only in this plugin's own folder, then ScriptsBuilder.MarkWorkspaceDirty + Compile; refuses a dirty/detached/no-upstream checkout before writing; folder resolved by walking up from the running assembly to FlaxAssetManager.flaxproj, contained inside Globals.ProjectFolder
 Source/FlaxAssetManagerEditor/Core/Utils/MaterialGraphBuilder.cs # creates the material asset (Editor.CreateAsset) and builds its PBR surface graph (root-box wiring, multipliers, public parameters); ValidateRootInputBoxes checks the hard-coded box ids against the engine's own box metadata before wiring
   MaterialRoleDetector.cs # PBR role from file name (ARM aware)
   GitSafety.cs            # engine-free guards: https-only URL, git ref/commit validation, path containment (Ordinal on Linux)
+  GitRunner.cs            # shared git spawn: ArgumentList per argument, exit code + both streams returned as data, kills an abandoned/timed-out git (with its tree)
   MainThreadDispatcher.cs  # the plugin's one main-thread hop (wraps Scripting.RunOnUpdate) for post-await engine/GUI work
   ContentDatabaseUtils.cs # content-folder refresh + lookups shared by install/import/material
   SystemFileOpener.cs     # open Sources.json in the OS editor (detached, non-blocking); refuses paths outside the project and shell-executable extensions
@@ -113,7 +115,7 @@ Destinations (downloaded files go under a `files/` subfolder; pack-*generated* a
 
 `FlaxAssetManagerWindow : EditorWindow` (`EditorWindow.cs:16`, `DockWindow.cs:16`):
 
-- Top: `ComboBox` source picker (`SourceUrlEntry.name ?? Manifest.sourceName ?? url + " (error)"`), `Refresh`, `Add URL` (ContextMenuBase `PluginsWindow.cs:233` + clipboard prefill), `Edit` (prefilled URL popup, calls `SettingsService.RenameSource`), `Remove`, `Edit List` (opens `Sources.json` in the OS editor via `SystemFileOpener`; detached launch so a modal editor cannot block the window).
+- Top: `ComboBox` source picker (`SourceUrlEntry.name ?? Manifest.sourceName ?? url + " (error)"`), `Refresh`, `Add URL` (ContextMenuBase `PluginsWindow.cs:233` + clipboard prefill), `Edit` (prefilled URL popup, calls `SettingsService.RenameSource`), `Remove`, `Edit List` (opens `Sources.json` in the OS editor via `SystemFileOpener`; detached launch so a modal editor cannot block the window), `Update Plugin` (far right; confirms, then `PluginUpdateService`: `git pull --ff-only` in the plugin folder + a scripts recompile — the reload disposes this window, so the handler's marshalled tail expects `IsDisposing`).
 - Row 2: `TextBox` search + `ComboBox` type filter `[All, FileAssetType names, PluginProject, ArchivePack]`.
 - Split: left `Panel(ScrollBars.Vertical)+VerticalPanel` rows (`ContainerControl` `View` button), right `Label` title/details/status + `Install/Update/Reinstall` + `ProgressBar` (`HorizontalStretchBottom`).
 - Bottom: `ProgressBar` + `Label` progress/status + `Label` dest hint.
@@ -223,9 +225,9 @@ Kept as a record of what the guards below are defending, so they are not "simpli
 
 ## Open items — need a product/publishing decision
 
-See **`docs/DECISIONS.md`** (numbered D1-D15; **D1 is resolved** — the material pipeline is stock
+See **`docs/DECISIONS.md`** (numbered D1-D16; **D1 is resolved** — the material pipeline is stock
 API only, and material creation runs as part of installing a texture pack again; **D3** off-main-thread GUI work and
-**D14** write-from-remote-input safety are resolved too). Headlines: **D2** licensing incl. vendored
+**D14** write-from-remote-input safety and **D16** the plugin's own `git pull` + recompile update are resolved too). Headlines: **D2** licensing incl. vendored
 `EKEditorUIKit`, **D4** E2E test shipping in the release assembly, **D5** material role coverage
 (the UI now states what the material will not use), **D6** uninstall deletes generated/imported
 assets, **D7/D8** plugin metadata and publishing hygiene,
@@ -273,6 +275,9 @@ No native code (`BuildNativeCode=false` both modules); pure C#; Newtonsoft.Json 
 - **New PackType (e.g. Template):** Add to `PackType.cs`, add branch in `AssetInstallerService.InstallAsync`, update `ValidateManifest` matrix, extend `AssetSourceConfig` if needed; omit → AssetPack compat.
 - **Services:** Keep I/O out of models, UI out of services. Add helpers under `Core/Utils/`. Use `SettingsService` for all `Content/FlaxAssetManager/*` I/O.
 - **Git:** Keep plain clone. To add update check without re-clone, implement `git ls-remote` ahead of `clone` — do not touch submodules.
+  Every git spawn goes through `Core/Utils/GitRunner.cs` (argument-per-argument, bounded, kills an
+  abandoned git). The plugin's own update is the one pull allowed, in its own folder, `--ff-only` only,
+  after the preflight refusals (D16) — it is not a pattern for installing packs.
 - **Index (master) manifests:** `manifestKind:index` + `entries[]` (`Core/Models/IndexEntry.cs`), rules in `AssetSourceManager.ValidateIndex`, UI in `RebuildIndexList`/`SelectIndexEntry`/`OnAddLinkedSourceClicked`. An index must never install, never auto-follow a link, and never write install records (D13): trust is per URL, never transitive. Entry `sourceId` is the join key — keep the uniqueness check in the validator and the collision check in the UI.
 
 ## Common Pitfalls

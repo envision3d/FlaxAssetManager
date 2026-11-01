@@ -40,6 +40,17 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
   your browser through `Platform.OpenUrl`. An index may publish
   `entries[].website`; an index cannot invent a website for an entry it has not published, and the link is
   offered only for `http(s)`. The plugin never fetches the URL — clicking is an explicit user action.
+* **Update Plugin — the plugin updates itself** — a header button (far right, after **Edit List**) runs
+  `git pull --ff-only` in `Plugins/FlaxAssetManager` and then asks the editor to recompile the project
+  scripts, because the plugin's assemblies are built by Flax and are not shipped in git, so a pulled source
+  tree only takes effect after a rebuild (`ScriptsBuilder.MarkWorkspaceDirty` + `Compile`, marshalled to the
+  main thread). A confirm dialog names both steps up front: a scripts reload replaces the plugin's running
+  assemblies and disposes this window. The pull is refused with **nothing written** when the folder is not a
+  git checkout, has local changes, is on a detached HEAD, or has no upstream branch, and `--ff-only` means a
+  diverged branch fails with git's own words rather than merging into the user's commits. The recompile is
+  requested only when HEAD actually moved. The new shared `Core/Utils/GitRunner.cs` keeps git argument-per-
+  argument (hard constraint 11) and kills an abandoned or timed-out git together with its process tree, so a
+  hung `git pull` cannot land files after the operation has been reported over (D16).
 
 ### Changed
 

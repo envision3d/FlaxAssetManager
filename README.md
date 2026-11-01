@@ -133,6 +133,15 @@ or `file://` link in a manifest gets refused rather than opening a mail composer
 **Edit source list** — opens `Content/FlaxAssetManager/Sources.json` in your OS text editor, then press
 **Refresh** to apply the edits. Only files inside the project folder are handed to the OS, and
 extensions a shell would *run* are refused.
+
+**Update the plugin itself** — **Update Plugin** (far right of the header bar) updates this plugin in
+place: `git pull --ff-only` in `Plugins/FlaxAssetManager`, then a scripts recompile, because the plugin's
+assemblies are built by Flax rather than shipped in git, so a pulled source tree only takes effect after a
+rebuild. A confirm dialog states both steps first — a scripts reload rebuilds the plugin's assemblies while
+the editor runs, and this window is disposed by it. Nothing is pulled into a checkout with local changes, a
+detached HEAD, no upstream branch, or a branch that has diverged from its remote: that is reported and the
+folder is left exactly as it was, and `--ff-only` never merges, so a pull cannot rewrite your commits. It
+needs `git` on PATH, and it updates sources only.
 d05|
 **Packs that install code** — a pack with `Script` files, or a `pluginProject` (clones a git repo into
 `Plugins/` and adds it to your `.flaxproj`), shows **Installs code: …** in the details panel, which also

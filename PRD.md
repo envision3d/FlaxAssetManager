@@ -82,6 +82,11 @@ without hand-assembling them from git URLs and forum threads.
   for bulk changes.
 * **UC6 — Author a source.** A content author writes a manifest, validates it against
   `docs/MANIFEST_SPEC.md`, hosts it anywhere over HTTPS, and points users at it.
+* **UC7 — Update the plugin itself.** **Update Plugin** pulls the plugin's own git checkout
+  (`git pull --ff-only` in `Plugins/FlaxAssetManager`) and asks the editor to recompile the scripts, so
+  the new code is what the editor runs. Manual, confirmed, and refused before writing when the checkout
+  is not a clean branch that tracks a remote (D16). It is not UC4: the plugin is not a pack, has no
+  version badge, and nothing is polled.
 
 ## 5. Product rules the implementation is built around
 
