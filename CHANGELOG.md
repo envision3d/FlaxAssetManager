@@ -84,6 +84,22 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
   Flax 1.13 release sources, checked by the `compat/` build. Naming symbols absent from a release had
   pulled code back to them twice.
 
+### Fixed
+* **`Update Plugin` finds its own folder, and stops assuming its name** — the button resolved the plugin's
+  folder by walking up from the running assembly to a file named `FlaxAssetManager.flaxproj`, falling back to
+  `Plugins/FlaxAssetManager`. That is an assumed folder name, and the manager's own `pluginProject` install
+  creates a folder named from the **git URL**, so an installed plugin failed with *"`FlaxAssetManager.flaxproj`
+  not found next to the running assembly, and not at `Plugins/FlaxAssetManager`"* — as did a renamed folder,
+  a checkout under a different name, and a fork. Discovery now reads the tree (`Core/Utils/FlaxProjectLocator.cs`):
+  a plugin is identified by its project file — the file name, or the `Name` field inside it — through the
+  project folder that built the running assembly, the `.flaxproj` the **open project references**, the folder
+  named in this plugin's `.installed.json`, a bounded shallowest-first scan of `Plugins/`, the documented
+  location, and last the project the assembly was built into, which is the only route that finds a fork that
+  renamed the project file as well. Identity is checked on every candidate, the host project's own project
+  file is never taken for the plugin's, and the containment rule of D14 is unchanged: the result must sit
+  inside `Globals.ProjectFolder`, and the confirm dialog still names the exact folder before anything is
+  written (D16).
+
 ## [1.0.0]
 
 First public release.

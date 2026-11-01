@@ -545,10 +545,21 @@ not in git, so a freshly pulled tree is invisible until the scripts are rebuilt 
 **Resolved: an Update Plugin header button** (far right of the source bar in `FlaxAssetManagerWindow`)
 driving `Core/Services/PluginUpdateService.cs`:
 
-* **`git pull --ff-only` in the plugin's own folder.** The folder is resolved by walking up from the
-  running assembly to `FlaxAssetManager.flaxproj` (the `Binaries/<target>/<platform>/<arch>/<config>`
-  depth is the builder's business, not ours), falling back to `Plugins/FlaxAssetManager`, and the result
-  must sit inside `Globals.ProjectFolder`: this is a write path, so it takes the containment rule of D14.
+* **`git pull --ff-only` in the plugin's own folder.** The folder is **discovered by its project file, never
+  guessed from a folder name** (`Core/Utils/FlaxProjectLocator.cs`): a plugin identifies itself with its
+  `.flaxproj` — the file name, or the `Name` inside it — while the folder is whatever a git URL, an archive,
+  a fork, or the user chose. Routes, in priority order: the project folder that built the running assembly
+  (walking up from `Assembly.Location`, since the `Binaries/<target>/<platform>/<arch>/<config>` depth is the
+  builder's business, not ours), the `.flaxproj` the **open project references** (the tree's own record of
+  where its plugins live, written when the plugin was added), the folder this plugin's `.installed.json`
+  records for a `pluginProject` install (named from the git URL), a bounded shallowest-first scan of
+  `Plugins/`, the documented `Plugins/FlaxAssetManager`, and last the project folder the assembly was built
+  into, which is the only route that finds a fork that renamed the project file too. Every candidate has to
+  *be* this plugin's project folder, and the result must sit inside `Globals.ProjectFolder`: this is a write
+  path, so it takes the containment rule of D14. A project file at the top of the open project is the host
+  project (project targets build into it) and is skipped, so it is never mistaken for the plugin.
+  The old code assumed the folder name, and a plugin installed into a folder named after its git URL — which
+  is what the installer creates — failed with "`FlaxAssetManager.flaxproj` not found".
 * **Preflight refuses, and nothing is written.** Not a git checkout, a dirty work tree
   (`status --porcelain`), a detached HEAD (`symbolic-ref -q HEAD` exits 1) and a branch with no upstream
   (`rev-parse --abbrev-ref @{u}` exits 128) are each reported with the thing to fix. `--ff-only` is the

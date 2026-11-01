@@ -32,10 +32,11 @@ Source/FlaxAssetManagerEditor/Core/Services/
   AssetSourceManager.cs     # HttpClient 30s, ValidateManifest (STRICT) + ValidateIndex (index manifests)
   AssetInstallerService.cs  # SemaphoreSlim(6), SHA256, git clone into staging, zip extract (entry-name rule), reference injection; uninstall deletes files[] + generatedAssets + imported sidecars, then prunes the pack folder
 Source/FlaxAssetManagerEditor/Core/Services/MaterialCreatorService.cs # PBR role detection + surface-graph rewiring + model slot assignment (stock API, engine calls marshalled to the main thread); records the created M_<packId>.flax on the install entry (RecordGeneratedAsset)
-Source/FlaxAssetManagerEditor/Core/Services/PluginUpdateService.cs # self-update: git pull --ff-only in this plugin's own folder, then ScriptsBuilder.MarkWorkspaceDirty + Compile; refuses a dirty/detached/no-upstream checkout before writing; folder resolved by walking up from the running assembly to FlaxAssetManager.flaxproj, contained inside Globals.ProjectFolder
+Source/FlaxAssetManagerEditor/Core/Services/PluginUpdateService.cs # self-update: git pull --ff-only in this plugin's own folder, then ScriptsBuilder.MarkWorkspaceDirty + Compile; refuses a dirty/detached/no-upstream checkout before writing; the folder is DISCOVERED by its project file (file name, or the Name inside it) — assembly ancestors, the open project's References, .installed.json records, a bounded Plugins/ scan, the documented location — never by an assumed folder name, and always contained inside Globals.ProjectFolder
 Source/FlaxAssetManagerEditor/Core/Utils/MaterialGraphBuilder.cs # creates the material asset (Editor.CreateAsset) and builds its PBR surface graph (root-box wiring, multipliers, public parameters); ValidateRootInputBoxes checks the hard-coded box ids against the engine's own box metadata before wiring
   MaterialRoleDetector.cs # PBR role from file name (ARM aware)
   GitSafety.cs            # engine-free guards: https-only URL, git ref/commit validation, path containment (Ordinal on Linux)
+  FlaxProjectLocator.cs   # engine-free *.flaxproj reader/finder: a project's Name field, identity by file name OR Name, $(ProjectPath)/$(EnginePath)/$(ProjectName) macro expansion of References, bounded BFS scan that skips Binaries/Cache/Source/…, ancestors walk from an assembly dir; case-correct path comparison
   GitRunner.cs            # shared git spawn: ArgumentList per argument, exit code + both streams returned as data, kills an abandoned/timed-out git (with its tree)
   MainThreadDispatcher.cs  # the plugin's one main-thread hop (wraps Scripting.RunOnUpdate) for post-await engine/GUI work
   ContentDatabaseUtils.cs # content-folder refresh + lookups shared by install/import/material
@@ -220,7 +221,11 @@ Kept as a record of what the guards below are defending, so they are not "simpli
 - **Every material-pipeline engine call runs on the main thread.** `MaterialCreatorService.RunOnMain`
   (→ `MainThreadDispatcher.RunOnMain` → `Scripting.RunOnUpdate`) wraps the content-database lookups, the
   import hand-off, the graph build/rewire and the model-slot save; the awaits stay off the main thread.
-- Verified helpers: `GitSafety` (31 assertions) and the `FileAssetType` converter (9 cases) were
+- Verified helpers: `GitSafety` (31 assertions), the `FileAssetType` converter (9 cases) and
+  `FlaxProjectLocator` (42 checks: project-file discovery by name and by the `Name` inside, `.flaxproj`
+  macro expansion, scan depth/budget limits, ancestor walks) were exercised in a standalone harness with
+  the real sources linked in. That locator harness is what proves `Update Plugin` finds its own folder when
+  the folder is named from a git URL (D16).
   exercised in a standalone harness with the real sources linked in.
 
 ## Open items — need a product/publishing decision
@@ -298,6 +303,10 @@ No native code (`BuildNativeCode=false` both modules); pure C#; Newtonsoft.Json 
 - Expecting a build symbol to gate plugin C#: on stock 1.13 there is **no** C# preprocessor-define path for plugin modules (`ScriptingAPI.Defines` in `Module.Setup` does not reach the plugin assembly; `Target.GlobalDefinitions` is native-only). Gate dev-only code at runtime (see `FLAX_AM_E2E` and D4).
 - Naming a specific asset source, manifest, pack id, variant id or URL in code, tests or docs — the plugin and its E2E harness are source-agnostic by policy.
 - Dropping the **"installs code" gate** (`PackInstallsCode` / `ConfirmCodeInstall` in the window): any pack that lands *compiled* code — `Script` files, a `pluginProject` clone — must warn and confirm first. A new pack type, destination or file type that ends up compiled needs the same gate, otherwise the trust story has a hole (see `docs/DECISIONS.md` D12).
+- Naming the plugin's own folder in a path. The manager's `pluginProject` install names a cloned folder from
+  the git URL, users rename folders, and forks rename projects, so `Plugins/FlaxAssetManager` is documentation,
+  not an identity: resolve this plugin by its project file — file name, or the `Name` inside it — through
+  `Core/Utils/FlaxProjectLocator.cs`, and keep the D14 containment check on the result (D16).
 
 ## Pointers
 

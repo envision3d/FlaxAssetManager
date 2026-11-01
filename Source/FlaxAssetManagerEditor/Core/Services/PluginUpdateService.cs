@@ -13,8 +13,10 @@ namespace FlaxAssetManager.Core.Services
     /// Updates <b>this plugin itself</b>: <c>git pull</c> in the plugin's own folder, then a scripts
     /// recompile request so the editor loads the new code.
     /// <para>
-    /// The plugin ships as a git checkout under <c>Plugins/FlaxAssetManager/</c> (a <c>pluginProject</c>
-    /// install is a plain clone, and a contributor's checkout is one too), so updating it is a git
+    /// The plugin ships as a git checkout under <c>Plugins/</c> (a <c>pluginProject</c> install is a plain
+    /// clone, and a contributor's checkout is one too), so updating it is a git operation on that folder,
+    /// not a download. Which folder that is gets <b>discovered, never guessed from a folder name</b> — see
+    /// <see cref="TryResolvePluginFolder"/>. The plugin's assemblies are not in git - Flax generates
     /// operation on that folder, not a download. The plugin's assemblies are not in git — Flax generates
     /// <c>Binaries/</c> — so a changed source tree only takes effect once the editor rebuilds and reloads
     /// the scripts, which is why the pull is followed by <see cref="ScriptsBuilder.Compile"/>.
@@ -30,11 +32,44 @@ namespace FlaxAssetManager.Core.Services
         /// <summary>Marker file of this plugin project, used to locate its folder.</summary>
         public const string PluginProjectFileName = "FlaxAssetManager.flaxproj";
 
+        /// <summary>
+        /// What this plugin's project calls itself (the <c>Name</c> field of its <c>.flaxproj</c>). A folder
+        /// name is not identity: it is whatever a git URL, an archive, a fork, or the user chose, so folder
+        /// discovery matches a project file by <b>name and content</b> and never assumes a folder.
+        /// </summary>
+        public const string PluginProjectName = "FlaxAssetManager";
+
+        /// <summary>How far up to walk from the running assembly to reach the project folder that built it.</summary>
+        private const int AssemblyWalkDepth = 10;
+
+        /// <summary>Budget for the last-resort <c>Plugins/</c> scan: depth, and directories read.</summary>
+        private const int PluginsScanDepth = 4;
+        private const int PluginsScanMaxDirectories = 2000;
+
         /// <summary>Preflight probes are local; a hung one means the checkout is broken, not the network.</summary>
         private const int PreflightTimeoutMs = 30 * 1000;
 
         /// <summary>A pull touches the network, and git has no built-in timeout of its own.</summary>
         private const int PullTimeoutMs = 300 * 1000;
+
+        /// <summary>
+        /// This plugin's settings service, for the install-record route of folder discovery: an installed
+        /// plugin project's folder is recorded there under a name that came from the git URL, which is the
+        /// common case of a folder name this plugin cannot guess. Null is allowed; that route is skipped.
+        /// </summary>
+        private readonly SettingsService _settings;
+
+        /// <summary>Folder discovery without install records.</summary>
+        public PluginUpdateService()
+            : this(null)
+        {
+        }
+
+        /// <summary>Folder discovery with this plugin's install records included.</summary>
+        public PluginUpdateService(SettingsService settings)
+        {
+            _settings = settings;
+        }
 
         /// <summary>
         /// The outcome of an update. <see cref="Okay"/> says the flow ran to a conclusion the user can
@@ -61,77 +96,252 @@ namespace FlaxAssetManager.Core.Services
         }
 
         /// <summary>
-        /// Finds the folder of the running plugin: the directory that holds
-        /// <see cref="PluginProjectFileName"/>, found by walking up from this assembly (the editor module
-        /// loads from <c>Binaries/&lt;EditorTarget&gt;/&lt;platform&gt;/&lt;arch&gt;/&lt;config&gt;/</c>,
-        /// whose depth is the builder's business, not ours), falling back to the documented install
-        /// location <c>&lt;project&gt;/Plugins/FlaxAssetManager</c>.
+        /// Finds the folder of the running plugin <b>by content, never by an assumed folder name</b>, trying
+        /// these routes in order (the first one that passes the checks below wins):
+        /// <list type="number">
+        /// <item>the project folder that built the running assembly — the nearest ancestor of
+        /// <c>Assembly.Location</c> holding this plugin's <c>.flaxproj</c> (the
+        /// <c>Binaries</c> / target / platform / arch / config depth is the builder's
+        /// business, not ours);</item>
+        /// <item>the plugin the <b>open project references</b> — the <c>.flaxproj</c> a <c>References</c>
+        /// entry of the host project file points at. That entry was written when the plugin was added, so
+        /// it is the tree's own record of where the plugin lives, and it is the route that survives a
+        /// folder the user (or a git URL, or an archive) named differently from this plugin;</item>
+        /// <item>the folder this plugin's own <c>.installed.json</c> records for a <c>pluginProject</c>
+        /// install — that folder name comes from the git URL, never from this plugin's name;</item>
+        /// <item>a bounded, shallowest-first scan of <c>Plugins/</c> for a project file that is this
+        /// plugin's project;</item>
+        /// <item>the documented install location <c>&lt;project&gt;/Plugins/FlaxAssetManager</c>;</item>
+        /// <item>as a last resort, the project folder this assembly was built into, when that is not the
+        /// open project — the only route that finds a fork that renamed the project file too.</item>
+        /// </list>
+        /// Every candidate has to <i>be</i> this plugin's project folder: a file named
+        /// <see cref="PluginProjectFileName"/>, or a <c>.flaxproj</c> whose <c>Name</c> field is
+        /// <see cref="PluginProjectName"/>. A folder that merely looks like it is never written to.
         /// <para>
         /// The result is required to sit inside <see cref="Globals.ProjectFolder"/>: this is the folder a
         /// <c>git pull</c> will write into, so the same containment rule that guards every other write
-        /// applies (D14). A checkout that is the open project itself is reported as such, because
-        /// updating it from inside the editor is the same operation on the project the user is working in.
+        /// applies (D14). A candidate that is the open project's own folder is the host project — the
+        /// project target builds into it, so its project file says nothing about this plugin, and it is
+        /// skipped — unless it is this plugin's project, in which case the plugin <i>is</i> the open project
+        /// (a contributor's checkout) and that is reported instead.
         /// </para>
         /// </summary>
-        public static bool TryResolvePluginFolder(out string folder, out string error)
+        public bool TryResolvePluginFolder(out string folder, out string error)
         {
             folder = null;
             error = null;
 
             var projectFolder = Path.GetFullPath(Globals.ProjectFolder);
-            var candidates = new List<string>();
+            var candidates = EnumerateCandidateFolders(projectFolder, _settings);
 
-            var dir = Path.GetDirectoryName(typeof(PluginUpdateService).Assembly.Location);
-            for (int depth = 0; depth < 8 && !string.IsNullOrEmpty(dir); depth++)
+            if (candidates.Count == 0)
             {
-                if (File.Exists(Path.Combine(dir, PluginProjectFileName)))
-                {
-                    candidates.Add(dir);
-                    break;
-                }
-                dir = Path.GetDirectoryName(dir);
+                error = $"Could not find this plugin's folder: no Flax project named '{PluginProjectName}' " +
+                        $"(a '{PluginProjectFileName}', or a .flaxproj whose \"Name\" is '{PluginProjectName}') was found " +
+                        $"next to the running assembly, in the references of the open project, in an install record, " +
+                        $"or under '{DisplayFolder(Path.Combine(projectFolder, "Plugins"))}'.";
+                return false;
             }
 
-            candidates.Add(Path.Combine(projectFolder, "Plugins", "FlaxAssetManager"));
-
+            string rejection = null;
             foreach (var candidate in candidates)
             {
                 string full;
                 try
                 {
-                    full = Path.GetFullPath(candidate);
+                    full = Path.GetFullPath(candidate.Folder);
                 }
                 catch (Exception e)
                 {
-                    error = $"Could not resolve the plugin folder path '{candidate}': {e.Message}";
+                    rejection = $"Could not resolve the plugin folder path '{candidate.Folder}': {e.Message}";
                     continue;
                 }
 
-                if (!File.Exists(Path.Combine(full, PluginProjectFileName)))
-                    continue;
-
                 if (string.Equals(full.TrimEnd(Path.DirectorySeparatorChar), projectFolder.TrimEnd(Path.DirectorySeparatorChar),
-                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                        FlaxProjectLocator.PathComparison))
                 {
-                    error = "This plugin project is the open project, not a plugin inside it, so it cannot update itself from here. " +
-                            "Update it with git in your own checkout, or open a host project that has it under Plugins/.";
+                    if (candidate.IsThisPluginsProject)
+                    {
+                        rejection = "This plugin project is the open project, not a plugin inside it, so it cannot update itself from here. " +
+                                    "Update it with git in your own checkout, or open a host project that has it under Plugins/.";
+                    }
+
                     continue;
                 }
 
                 if (!GitSafety.IsUnderRoot(full, projectFolder))
                 {
-                    error = $"The plugin folder '{full}' is outside the open project '{projectFolder}', so it will not be written to.";
+                    rejection = $"The plugin folder '{full}' is outside the open project '{projectFolder}', so it will not be written to.";
                     continue;
                 }
 
                 folder = full;
+                Debug.Log($"FlaxAssetManager: self-update plugin folder resolved to '{DisplayFolder(full)}' via {candidate.How}.");
                 return true;
             }
 
-            if (error == null)
-                error = $"Could not find this plugin's folder ('{PluginProjectFileName}' not found next to the running assembly, " +
-                        $"and not at '{Path.Combine("Plugins", "FlaxAssetManager")}' in the open project).";
+            if (rejection != null)
+            {
+                error = rejection;
+                return false;
+            }
+
+            var found = new List<string>(candidates.Count);
+            foreach (var candidate in candidates)
+                found.Add(DisplayFolder(candidate.Folder));
+            error = $"Found this plugin's project at {string.Join(", ", found)}, but none of those folders is a plugin inside the open project '{DisplayFolder(projectFolder)}'.";
             return false;
+        }
+
+        /// <summary>
+        /// One folder a discovery route pointed at, with the route's name (for the log and the failure
+        /// message) and whether the folder was identified as this plugin's project by its project file
+        /// (<c>true</c>) or only as the project that built the running assembly (<c>false</c>).
+        /// </summary>
+        private sealed class Candidate
+        {
+            public string Folder;
+            public bool IsThisPluginsProject;
+            public string How;
+        }
+
+        /// <summary>
+        /// Runs the discovery routes in priority order and de-duplicates them, so a plugin found by its
+        /// reference and by a scan is one candidate, listed once, in the order the routes ran.
+        /// </summary>
+        private static List<Candidate> EnumerateCandidateFolders(string projectFolder, SettingsService settings)
+        {
+            var candidates = new List<Candidate>();
+            var seen = new HashSet<string>(FlaxProjectLocator.PathComparer);
+
+            // 1. The project folder that built the running assembly. Walking up is the only way that
+            // needs no knowledge of the builder's Binaries layout. The nearest ancestor holding *any*
+            // project file is remembered separately: for an installed plugin that is the host project
+            // (whose project file is not this plugin's), and for a fork it is this plugin's folder under
+            // a name nothing else knows.
+            string builtIntoProject = null;
+            foreach (var dir in FlaxProjectLocator.EnumerateAncestorDirectories(SafeAssemblyDirectory(), AssemblyWalkDepth))
+            {
+                if (FlaxProjectLocator.FindProjectFileInDirectory(dir, PluginProjectName) != null)
+                {
+                    Add(candidates, seen, dir, true, "the project folder that built the running assembly");
+                    break;
+                }
+
+                if (builtIntoProject == null && FlaxProjectLocator.FindAnyProjectFileInDirectory(dir) != null)
+                    builtIntoProject = dir;
+            }
+
+            // 2. The open project's references: the tree's own record of where its plugins are.
+            var rootProjectFile = FlaxProjectLocator.FindRootProjectFile(projectFolder);
+            if (rootProjectFile != null)
+            {
+                foreach (var reference in FlaxProjectLocator.ReadReferenceProjectPaths(rootProjectFile, EngineFolderForMacros()))
+                {
+                    if (!FlaxProjectLocator.IsProjectNamed(reference, PluginProjectName))
+                        continue;
+
+                    Add(candidates, seen, Path.GetDirectoryName(reference), true,
+                        $"the reference '{DisplayFolder(reference)}' of '{Path.GetFileName(rootProjectFile)}'");
+                }
+            }
+
+            // 3. This plugin's install records: a pluginProject clone is installed into a folder named
+            // from the git URL, which is not this plugin's name.
+            var records = settings?.Installed?.Installed;
+            if (records != null)
+            {
+                foreach (var entry in records)
+                {
+                    if (entry == null || string.IsNullOrEmpty(entry.InstallPath))
+                        continue;
+
+                    var installedFolder = Path.Combine(projectFolder, entry.InstallPath);
+                    if (FlaxProjectLocator.FindProjectFileInDirectory(installedFolder, PluginProjectName) == null)
+                        continue;
+
+                    Add(candidates, seen, installedFolder, true, $"the install record of '{entry.PackId}'");
+                }
+            }
+
+            // 4+5. The Plugins tree, then the documented location.
+            var pluginsFolder = Path.Combine(projectFolder, "Plugins");
+            foreach (var projectFile in FlaxProjectLocator.FindProjectFilesRecursive(pluginsFolder, PluginsScanDepth, PluginsScanMaxDirectories))
+            {
+                if (!FlaxProjectLocator.IsProjectNamed(projectFile, PluginProjectName))
+                    continue;
+
+                Add(candidates, seen, Path.GetDirectoryName(projectFile), true,
+                    $"the scan of '{DisplayFolder(pluginsFolder)}'");
+            }
+
+            AddIfPluginsProject(candidates, seen, Path.Combine(pluginsFolder, PluginProjectName),
+                $"the documented location '{DisplayFolder(Path.Combine(pluginsFolder, PluginProjectName))}'");
+
+            // 6. Last resort: the project folder this assembly was built into, when that is not the open
+            // project (the containment and open-project checks in the caller filter the host case out).
+            Add(candidates, seen, builtIntoProject, false, "the project folder the running assembly was built into");
+
+            return candidates;
+        }
+
+        /// <summary>Adds a candidate that has to be this plugin's project folder, i.e. hold its project file.</summary>
+        private static void AddIfPluginsProject(List<Candidate> candidates, HashSet<string> seen, string folder, string how)
+        {
+            if (string.IsNullOrWhiteSpace(folder) ||
+                FlaxProjectLocator.FindProjectFileInDirectory(folder, PluginProjectName) == null)
+                return;
+
+            Add(candidates, seen, folder, true, how);
+        }
+
+        private static void Add(List<Candidate> candidates, HashSet<string> seen, string folder, bool isThisPluginsProject, string how)
+        {
+            if (string.IsNullOrWhiteSpace(folder))
+                return;
+
+            try
+            {
+                if (!seen.Add(Path.GetFullPath(folder)))
+                    return;
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            candidates.Add(new Candidate { Folder = folder, IsThisPluginsProject = isThisPluginsProject, How = how });
+        }
+
+        /// <summary>The directory the running assembly was loaded from, or null when the runtime cannot say.</summary>
+        private static string SafeAssemblyDirectory()
+        {
+            try
+            {
+                return Path.GetDirectoryName(typeof(PluginUpdateService).Assembly.Location);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The folder <c>$(EnginePath)</c> expands to, for reference paths that use it: the engine content
+        /// folder sits at <c>&lt;engine&gt;/Content</c>, so its parent is the engine. Null when the engine
+        /// cannot be asked — such a reference is then skipped rather than resolved into the wrong place.
+        /// </summary>
+        private static string EngineFolderForMacros()
+        {
+            try
+            {
+                return Path.GetDirectoryName(Globals.EngineContentFolder);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>

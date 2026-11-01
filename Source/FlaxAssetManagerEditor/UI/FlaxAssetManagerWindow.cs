@@ -134,7 +134,7 @@ namespace FlaxAssetManager.UI
             _sourceManager = sourceManager;
             _installer = installer;
             _materialService = new MaterialCreatorService(settings);
-            _pluginUpdater = new PluginUpdateService();
+            _pluginUpdater = new PluginUpdateService(settings);
             _sourceManager.Fetched += OnFetched;
             _previewHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
             _audioHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
@@ -239,7 +239,7 @@ namespace FlaxAssetManager.UI
 
             _updatePluginButton = new FlatButton("Update Plugin")
             {
-                TooltipText = "Update this plugin in place: 'git pull --ff-only' in Plugins/FlaxAssetManager, then a scripts recompile so the editor loads the new code. A confirm dialog states both steps, and a checkout with local changes is left untouched.",
+                TooltipText = "Update this plugin in place: 'git pull --ff-only' in this plugin's own folder under Plugins/ (found by its .flaxproj, not by folder name), then a scripts recompile so the editor loads the new code. A confirm dialog states both steps, and a checkout with local changes is left untouched.",
                 Parent = _topBar,
                 AnchorPreset = AnchorPresets.TopLeft,
                 Bounds = new Rectangle(764, 7, 108, 22),
@@ -777,7 +777,7 @@ namespace FlaxAssetManager.UI
         private async void OnUpdatePluginClicked()
         {
             // Resolve the folder before asking, so the confirm can name exactly what gets written to.
-            if (!PluginUpdateService.TryResolvePluginFolder(out var folder, out var resolveError))
+            if (!_pluginUpdater.TryResolvePluginFolder(out var folder, out var resolveError))
             {
                 MessageBox.Show(resolveError, "Update plugin", MessageBoxButtons.OK);
                 return;
