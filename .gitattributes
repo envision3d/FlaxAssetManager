@@ -1,0 +1,56 @@
+# Line endings: commit LF, check out LF.
+#
+# This repo is text-only C# plus files Flax and CI parse directly (.flaxproj, .Build.cs, JSON
+# manifests, workflow YAML). A CRLF checkout does not break the C# compiler, but it does break
+# contributors diffing across platforms, and it inflates every future line-ending conversion diff.
+# Tracked files are LF today, so this rule is a no-op that keeps them that way.
+* text=auto eol=lf
+
+# Be explicit about the text files, so content-based auto-detection never mis-classifies them.
+*.cs                   text eol=lf
+*.csproj               text eol=lf
+*.props                text eol=lf
+*.targets              text eol=lf
+*.flaxproj             text eol=lf
+*.flaxplugin           text eol=lf
+*.json                 text eol=lf
+*.md                   text eol=lf
+*.yml                  text eol=lf
+*.yaml                 text eol=lf
+*.template             text eol=lf
+*.txt                  text eol=lf
+.gitignore             text eol=lf
+.gitattributes         text eol=lf
+LICENSE                text eol=lf
+
+# Binary: never normalize, never diff, never merge.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.tga    binary
+*.exr    binary
+*.hdr    binary
+*.fbx    binary
+*.obj    binary
+*.glb    binary
+*.gltf   binary
+*.wav    binary
+*.ogg    binary
+*.mp3    binary
+*.flax   binary
+*.dll    binary
+*.pdb    binary
+*.so     binary
+*.dylib  binary
+*.exe    binary
+*.zip    binary
+*.7z     binary
+
+# Generated / build output is gitignored; keep it out of diffs if it ever lands in a branch.
+/Binaries/** export-ignore
+/Object/**   export-ignore
+/Content/FlaxAssetManager/** export-ignore
+
+# Treat the vendored UI kit as vendored in diff stats (see EKEditorUIKit/README.md).
+/EKEditorUIKit/** linguist-vendored

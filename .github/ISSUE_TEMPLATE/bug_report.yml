@@ -1,0 +1,103 @@
+name: Bug report
+description: Something the plugin did not do as documented (install, remove, preview, material generation, source loading).
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Install and remove write an `ok`/`error` line per pack to the editor log - paste that, it usually
+        answers the question by itself. Redact anything you do not want public; `file:///home/...` sources
+        and private repo URLs are the usual things to cut.
+  - type: input
+    id: engine
+    attributes:
+      label: Flax Engine version
+      description: The editor you run this in (the plugin targets the official release build).
+      placeholder: "1.13.7012"
+    validations:
+      required: true
+  - type: input
+    id: plugin
+    attributes:
+      label: Plugin version
+      description: Shown in the plugin's project page, or the git commit you built from.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: sourceType
+    attributes:
+      label: Source type
+      description: The three source types behave differently, and only gitRepo clones.
+      options:
+        - manifestUrl (index JSON over HTTPS)
+        - gitRepo (Flax plugin project clone)
+        - assetPack (zip / folder)
+        - Not sure / other
+    validations:
+      required: true
+  - type: input
+    id: packId
+    attributes:
+      label: Pack id
+      description: The `id` of the pack in the manifest (empty if the failure is before any pack is chosen).
+      placeholder: "wood_planks_02"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      placeholder: |
+        Install of pack "wood_planks_02" reported success, but Content/WoodPlanks02 has no textures.
+        Expected: the eight map files plus a generated material.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include whether it reproduces in a fresh project - that distinction usually decides whether the plugin or a project state is at fault.
+      placeholder: |
+        1. Window menu -> Flax Asset Manager
+        2. Add URL -> https://.../index.json -> Add
+        3. Select "wood_planks_02" -> Install
+        4. Repros in a new empty project: yes
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Editor log lines
+      description: The lines FlaxAssetManager wrote (install/remove/material/import), plus any stack trace. Rendered as markdown.
+      render: text
+      placeholder: |
+        [FlaxAssetManager] Install wood_planks_02: 8 files -> Content/WoodPlanks02
+        [FlaxAssetManager] Material M_wood_planks_02 created
+  - type: textarea
+    id: state
+    attributes:
+      label: Source list and install record
+      description: Contents of `Content/FlaxAssetManager/Sources.json` and `Content/FlaxAssetManager/.installed.json` (redacted). These say what the plugin believes is installed.
+      render: json
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues (open and closed) for this.
+          required: true
+        - label: I read the README's install / safety-limit sections.
+          required: true
+        - label: I tested in a fresh project, or noted that I did not.
+          required: true

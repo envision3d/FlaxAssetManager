@@ -1,0 +1,13 @@
+{
+  "Name": "EKEditorUIKit",
+  "Version": "1.0.0",
+  "Company": "envision3d",
+  "Copyright": "Copyright (c) 2026 envision3d. Licensed under the MIT license.",
+  "GameTarget": "EKEditorUIKitTarget",
+  "EditorTarget": "EKEditorUIKitEditorTarget",
+  "References": [
+    {
+      "Name": "$(EnginePath)/Flax.flaxproj"
+    }
+  ]
+}

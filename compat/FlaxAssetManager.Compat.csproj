@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compatibility probe. It compiles every module of this plugin against the C# API assembly shipped in
+    an official Flax release, so code that only works against a locally patched engine fails loudly.
+    Not part of the plugin build - Flax builds the plugin through its own targets; this project exists
+    for CI and for contributors who want a 10-second check without launching the editor:
+
+      dotnet build compat/FlaxAssetManager.Compat.csproj -c Development -p:EngineDir=/path/to/flax
+
+    EngineDir must contain Binaries/Editor/Win64/Development/FlaxEngine.CSharp.dll (the editor package
+    of an official release) and Source/Platforms/DotNet/Newtonsoft.Json.dll. See
+    .github/workflows/compat.yml for a working invocation.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <NoWarn>CS0618;CS1591</NoWarn>
+    <!-- Preprocessor symbols the engine's own C# build defines for a Linux Development editor; the
+         plugin sources branch on a few of them, so they must match or the probe compiles a shape of
+         the code the editor never runs. -->
+    <DefineConstants>$(DefineConstants);PLATFORM_SDL;REVERSE_Z;BUILD_DEVELOPMENT;PLATFORM_LINUX;FLAX_EDITOR;FLAX;FLAX_ASSERTIONS;DOTNET_HOST_CORECLR;USE_NETCORE;FLAX_1;FLAX_1_13;FLAX_1_1_OR_NEWER;FLAX_1_13_OR_NEWER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Source/FlaxAssetManager/**/*.cs" Exclude="../Source/FlaxAssetManager/**/*.Build.cs" />
+    <Compile Include="../Source/FlaxAssetManagerEditor/**/*.cs" Exclude="../Source/FlaxAssetManagerEditor/**/*.Build.cs" />
+    <Compile Include="../EKEditorUIKit/Source/EKEditorUIKit/**/*.cs" Exclude="../EKEditorUIKit/Source/EKEditorUIKit/**/*.Build.cs" />
+    <Compile Include="../EKEditorUIKit/Source/EKEditorUIKitEditor/**/*.cs" Exclude="../EKEditorUIKit/Source/EKEditorUIKitEditor/**/*.Build.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="FlaxEngine.CSharp">
+      <HintPath>$(EngineDir)/Binaries/Editor/Win64/Development/FlaxEngine.CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(EngineDir)/Source/Platforms/DotNet/Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

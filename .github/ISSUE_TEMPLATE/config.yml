@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Flax Engine questions
+    url: https://flaxengine.com/community/
+    about: Engine, editor, and shader questions belong with the Flax community, not here.
+  - name: Pack / texture licensing
+    url: https://github.com/envision3d/FlaxAssetManager/blob/main/docs/DECISIONS.md
+    about: How this plugin handles third-party asset licensing (D2) - read this before filing a licensing issue.

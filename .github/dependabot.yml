@@ -1,0 +1,28 @@
+# Dependency update automation.
+#
+# What this plugin actually depends on:
+#
+#   * The Flax engine, pinned by FlaxAssetManager.flaxproj (MinEngineVersion) and by
+#     .github/workflows/compat.yml, which downloads one specific official build (1.13.7012). That
+#     pin is deliberate: the compat build is the check that the plugin still compiles against a
+#     stock engine at the version it claims to support, so an automated bump to a newer editor
+#     would test a different contract. It is bumped by hand, together with MinEngineVersion, and
+#     is not a package-manager entry.
+#   * The GitHub Actions used by that workflow - the usual supply-chain surface for a repo with no
+#     runtime dependencies, and what this file watches.
+#   * NuGet: the plugin references engine assemblies and Newtonsoft.Json exactly as the engine
+#     ships them, with no package version ranges of its own
+#     (compat/FlaxAssetManager.Compat.csproj), so there is nothing safe to auto-bump there.
+#
+# EKEditorUIKit is vendored source (D10) and is reviewed by hand; a package manager cannot track a
+# folder of copied files.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci

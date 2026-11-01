@@ -1,0 +1,23 @@
+# Code ownership.
+#
+# The GitHub repo has one maintainer, so this file is not a review-assignment mechanism today -
+# it is the machine-readable answer to "who owns this path", which matters for two specific
+# things in this plugin:
+#
+#   * EKEditorUIKit/ is vendored third-party code with its own license (see its README and
+#     docs/DECISIONS.md D10). Marking it explicitly stops a future contributor from treating a
+#     fix there as plugin code to polish, and keeps redistribution questions pointed at the file
+#     that documents them.
+#   * The install/uninstall and material-graph paths are the parts of the plugin that write to
+#     the user's disk and to the engine's content database. Docs for the safety rules live in
+#     AGENTS.md; the issue and PR templates list the gates a change there must clear.
+#
+# The address below is a placeholder on purpose: the repo is not published yet (no remote, no
+# commits). Replace it with the real account before the first push, otherwise GitHub warns that
+# no owner is resolvable and every new pull request is unassigned.
+
+*          @envision3d
+EKEditorUIKit/ @envision3d
+Source/FlaxAssetManagerEditor/Core/Services/ @envision3d
+Source/FlaxAssetManagerEditor/Core/Utils/MaterialGraphBuilder.cs @envision3d
+docs/      @envision3d

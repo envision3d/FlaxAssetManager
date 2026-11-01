@@ -1,0 +1,17 @@
+{
+  "Name": "FlaxAssetManager",
+  "Version": "1.0.0",
+  "Company": "envision3d",
+  "Copyright": "Copyright (c) 2026 envision3d. Licensed under the MIT license.",
+  "MinEngineVersion": "1.13.7012",
+  "GameTarget": "FlaxAssetManagerTarget",
+  "EditorTarget": "FlaxAssetManagerEditorTarget",
+  "References": [
+    {
+      "Name": "$(EnginePath)/Flax.flaxproj"
+    },
+    {
+      "Name": "$(ProjectPath)/EKEditorUIKit/EKEditorUIKit.flaxproj"
+    }
+  ]
+}

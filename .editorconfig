@@ -1,0 +1,39 @@
+# Editor conventions for the plugin tree.
+#
+# Why this exists: the plugin is edited from two directions - Flax's own editor and an external
+# IDE (Rider/VS Code) - and the CI build runs with -warnaserror, so formatting drift shows up as
+# build churn, not as a style warning. The rules below match what the tree already contains, so
+# this file is a guard against future drift, not a reformat request: `git ls-files` shows every
+# tracked text file is LF, 4-space indented, spaces-only.
+#
+# Deliberately NOT set: csharp_style_* "prefer thisQUALIFIED" / expression-body rules and the
+# var/explicit-`this.` preferences. Enabling those turns an unrelated IDE keystroke into a
+# hundreds-of-lines diff, and the compat build does not check style.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{csproj,props,targets,flaxproj,json,yml,yaml,md}]
+indent_size = 2
+
+# The vendored UI kit keeps its own upstream formatting. Re-indenting it makes a future upstream
+# diff unreadable, so it is excluded from these rules (see docs/DECISIONS.md, D10).
+[EKEditorUIKit/**.cs]
+indent_size = 4
+
+[*.{png,jpg,jpeg,tga,exr,fbx,glb,gltf,flax,dll,so,zip}]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+
+[*.md]
+# Two trailing spaces are a hard line break in Markdown, not whitespace to remove.
+trim_trailing_whitespace = false

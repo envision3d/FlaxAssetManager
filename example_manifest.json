@@ -1,0 +1,220 @@
+{
+  "sourceName": "Example Community",
+  "sourceId": "com.example.community",
+  "sourceVersion": "1.0.0",
+  "homepageUrl": "https://example.com",
+  "website": "https://example.com",
+  "description": "Example manifest for FlaxAssetManager. Copy and host as JSON. Every FileAssetType is demonstrated below. See docs/MANIFEST_SPEC.md for the full spec.",
+  "assets": [
+    {
+      "id": "pbr_bricks",
+      "name": "PBR Bricks",
+      "description": "Two brick material-texture set (albedo + normal) + a C# helper. Demonstrates MaterialTextures + Script.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Materials",
+      "tags": ["pbr", "brick", "texture"],
+      "previewUrl": "https://example.com/previews/bricks.jpg",
+      "license": "CC0",
+      "files": [
+        { "url": "https://example.com/assets/bricks/albedo.png", "path": "Textures/Bricks/albedo.png", "type": "MaterialTextures" },
+        { "url": "https://example.com/assets/bricks/normal.png", "path": "Textures/Bricks/normal.png", "type": "MaterialTextures" },
+        { "url": "https://raw.githubusercontent.com/example/repo/main/Scripts/BrickHelper.cs", "path": "Scripts/BrickHelper.cs", "type": "Script" }
+      ]
+    },
+    {
+      "id": "material_example",
+      "name": "Brick Material",
+      "description": "A ready-to-use Flax material asset (.flax). Demonstrates Material.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Materials",
+      "tags": ["material", "pbr"],
+      "previewUrl": "https://example.com/previews/material.jpg",
+      "license": "CC0",
+      "files": [
+        { "url": "https://example.com/assets/materials/BrickMaterial.flax", "path": "Materials/BrickMaterial.flax", "type": "Material" },
+        { "url": "https://example.com/assets/materials/BrickMaterial.albedo.png", "path": "Materials/BrickMaterial_Albedo.png", "type": "Texture" }
+      ]
+    },
+    {
+      "id": "material_node_example",
+      "name": "Custom Material Node",
+      "description": "A custom material graph node with HLSL source. Demonstrates MaterialNode.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Materials",
+      "tags": ["material", "node", "hlsl"],
+      "previewUrl": "https://example.com/previews/material-node.jpg",
+      "license": "MIT",
+      "files": [
+        { "url": "https://example.com/assets/nodes/TriplanarNode.flax", "path": "MaterialNodes/TriplanarNode.flax", "type": "MaterialNode" },
+        { "url": "https://example.com/assets/nodes/TriplanarNode.hlsl", "path": "MaterialNodes/TriplanarNode.hlsl", "type": "MaterialNode" }
+      ]
+    },
+    {
+      "id": "model_example",
+      "name": "Sci-Fi Crate Model",
+      "description": "A hard-surface crate with PBR textures. Demonstrates Model.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Models",
+      "tags": ["model", "crate", "sci-fi"],
+      "previewUrl": "https://example.com/previews/crate.jpg",
+      "license": "CC0",
+      "files": [
+        { "url": "https://example.com/assets/models/Crate.fbx", "path": "Models/Crate/Crate.fbx", "type": "Model" },
+        { "url": "https://example.com/assets/models/Crate_Albedo.png", "path": "Models/Crate/Crate_Albedo.png", "type": "Texture" }
+      ]
+    },
+    {
+      "id": "prefab_example",
+      "name": "Crate Prefab",
+      "description": "A prefab referencing the sci-fi crate model, ready to drop into a scene. Demonstrates Prefab.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Prefabs",
+      "tags": ["prefab", "crate"],
+      "previewUrl": "https://example.com/previews/crate-prefab.jpg",
+      "license": "CC0",
+      "files": [
+        { "url": "https://example.com/assets/prefabs/CratePrefab.flax", "path": "Prefabs/CratePrefab.flax", "type": "Prefab" }
+      ]
+    },
+    {
+      "id": "script_example",
+      "name": "Orbit Camera Script",
+      "description": "Standalone C# script — orbit camera controller. Demonstrates Script (.cs only, strict).",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Scripts",
+      "tags": ["script", "camera", "csharp"],
+      "previewUrl": "https://example.com/previews/orbit-camera.jpg",
+      "license": "MIT",
+      "files": [
+        { "url": "https://raw.githubusercontent.com/example/repo/main/Scripts/OrbitCamera.cs", "path": "Scripts/OrbitCamera.cs", "type": "Script" },
+        { "url": "https://raw.githubusercontent.com/example/repo/main/Scripts/OrbitCameraUtils.cs", "path": "Scripts/OrbitCameraUtils.cs", "type": "Script", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
+      ]
+    },
+    {
+      "id": "anim_graph_example",
+      "name": "Locomotion Anim Graph",
+      "description": "A locomotion animation graph (.flax) for a humanoid. Demonstrates AnimGraph.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Animation",
+      "tags": ["animation", "locomotion"],
+      "previewUrl": "https://example.com/previews/anim-graph.jpg",
+      "license": "MIT",
+      "files": [
+        { "url": "https://example.com/assets/animgraphs/Locomotion.flax", "path": "AnimGraphs/Locomotion.flax", "type": "AnimGraph" }
+      ]
+    },
+    {
+      "id": "audio_example",
+      "name": "Footstep SFX Pack",
+      "description": "A small pack of footstep sounds. Demonstrates Audio.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Audio",
+      "tags": ["audio", "sfx", "footstep"],
+      "previewUrl": "https://example.com/previews/footsteps.jpg",
+      "license": "CC0",
+      "files": [
+        { "url": "https://example.com/assets/audio/Footstep_01.wav", "path": "Audio/Footsteps/Footstep_01.wav", "type": "Audio" },
+        { "url": "https://example.com/assets/audio/Footstep_02.ogg", "path": "Audio/Footsteps/Footstep_02.ogg", "type": "Audio" }
+      ]
+    },
+    {
+      "id": "shader_example",
+      "name": "Water Surface Shader",
+      "description": "A water surface shader with HLSL source. Demonstrates Shader.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Shaders",
+      "tags": ["shader", "water", "hlsl"],
+      "previewUrl": "https://example.com/previews/water-shader.jpg",
+      "license": "MIT",
+      "files": [
+        { "url": "https://example.com/assets/shaders/Water.shader", "path": "Shaders/Water.shader", "type": "Shader" },
+        { "url": "https://example.com/assets/shaders/Water.hlsl", "path": "Shaders/Water.hlsl", "type": "Shader" }
+      ]
+    },
+    {
+      "id": "kitchen_sink",
+      "name": "Kitchen Sink — Every Type In One Pack",
+      "description": "One pack that includes one file of every FileAssetType (Texture, Material, MaterialNode, Model, Prefab, Script, AnimGraph, Audio, Shader, MaterialTextures) to exercise the manager's type filter and destination routing.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Demo",
+      "tags": ["demo", "every-type"],
+      "previewUrl": "https://example.com/previews/kitchen-sink.jpg",
+      "license": "CC0",
+      "files": [
+        { "url": "https://example.com/assets/kitchen/Demo_Texture.png", "path": "KitchenSink/Demo_Texture.png", "type": "Texture" },
+        { "url": "https://example.com/assets/kitchen/Demo_Material.flax", "path": "KitchenSink/Demo_Material.flax", "type": "Material" },
+        { "url": "https://example.com/assets/kitchen/Demo_Node.hlsl", "path": "KitchenSink/Demo_Node.hlsl", "type": "MaterialNode" },
+        { "url": "https://example.com/assets/kitchen/Demo_Model.fbx", "path": "KitchenSink/Demo_Model.fbx", "type": "Model" },
+        { "url": "https://example.com/assets/kitchen/Demo_Prefab.flax", "path": "KitchenSink/Demo_Prefab.flax", "type": "Prefab" },
+        { "url": "https://raw.githubusercontent.com/example/repo/main/Scripts/KitchenSink.cs", "path": "KitchenSink/KitchenSink.cs", "type": "Script" },
+        { "url": "https://example.com/assets/kitchen/Demo_AnimGraph.flax", "path": "KitchenSink/Demo_AnimGraph.flax", "type": "AnimGraph" },
+        { "url": "https://example.com/assets/kitchen/Demo_Sound.wav", "path": "KitchenSink/Demo_Sound.wav", "type": "Audio" },
+        { "url": "https://example.com/assets/kitchen/Demo_Shader.hlsl", "path": "KitchenSink/Demo_Shader.hlsl", "type": "Shader" },
+        { "url": "https://example.com/assets/kitchen/Demo_BaseColor.png", "path": "KitchenSink/Demo_BaseColor.png", "type": "MaterialTextures" }
+      ]
+    },
+    {
+      "id": "awesome_tools",
+      "name": "Awesome Tools",
+      "description": "Full plugin project with .flaxproj. Cloned to Plugins/. Demonstrates packType pluginProject (distribution.gitRepo).",
+      "packType": "pluginProject",
+      "version": "1.2.0",
+      "category": "Tools",
+      "tags": ["plugin", "tools"],
+      "previewUrl": "https://example.com/previews/awesome-tools.jpg",
+      "license": "MIT",
+      "distribution": { "kind": "gitRepo", "url": "https://github.com/example/AwesomeTools.git", "branch": "main" }
+    },
+    {
+      "id": "awesome_tools_pinned",
+      "name": "Awesome Tools (Pinned Commit)",
+      "description": "Same plugin as above but pinned to a branch + commit SHA. Shows branch and commit fields.",
+      "packType": "pluginProject",
+      "version": "1.2.1",
+      "category": "Tools",
+      "tags": ["plugin"],
+      "distribution": { "kind": "gitRepo", "url": "https://github.com/example/AwesomeTools.git", "branch": "release/1.x", "commit": "abc123def456abc123def456abc123def456abcd" }
+    },
+    {
+      "id": "hd_wall",
+      "name": "HD Wall (Variants Only)",
+      "description": "No base files[] — demonstrates the conditional files rule: variants[] is non-empty, so the pack is valid and the first variant (1k) is the default set. See docs/MANIFEST_SPEC.md §5.3.",
+      "packType": "assetPack",
+      "version": "1.0.0",
+      "category": "Materials",
+      "tags": ["variants", "wall", "demo"],
+      "license": "CC0",
+      "variants": [
+        { "id": "1k", "name": "1K", "files": [
+          { "url": "https://example.com/assets/wall/wall_diff_1k.jpg", "path": "wall_diff_1k.jpg", "type": "MaterialTexture" },
+          { "url": "https://example.com/assets/wall/wall_nor_dx_1k.jpg", "path": "wall_nor_dx_1k.jpg", "type": "MaterialTexture" }
+        ]},
+        { "id": "4k", "name": "4K", "files": [
+          { "url": "https://example.com/assets/wall/wall_diff_4k.jpg", "path": "wall_diff_4k.jpg", "type": "MaterialTexture" },
+          { "url": "https://example.com/assets/wall/wall_nor_dx_4k.jpg", "path": "wall_nor_dx_4k.jpg", "type": "MaterialTexture" }
+        ]}
+      ]
+    },
+    {
+      "id": "demo_archive",
+      "name": "Demo Archive (Zip)",
+      "description": "Demonstrates archivePack: a single .zip download is extracted to the content destination with the archive's internal layout preserved (zip-slip guarded, atomic). See docs/MANIFEST_SPEC.md section 6.",
+      "packType": "archivePack",
+      "version": "1.0.0",
+      "category": "Demo",
+      "tags": ["archive", "zip", "demo"],
+      "license": "CC0",
+      "distribution": { "kind": "archive", "url": "https://example.com/packs/demo_archive.zip" }
+    }
+  ]
+}

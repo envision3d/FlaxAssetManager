@@ -1,0 +1,47 @@
+name: compat
+
+# The plugin is pure C# on top of the engine's scripting API. The check that protects users is that it
+# compiles against an OFFICIAL Flax release - not only against a development checkout - so this job
+# compiles every module against the reference assembly of a public release. See compat/README.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '30 4 * * 1'   # weekly: a new engine release shows up as a compile break, not as a user bug report
+
+env:
+  # Bump by reading https://api.flaxengine.com/launcher/engine (engineVersion -> the underscore tag below).
+  FLAX_RELEASE_URL: https://vps3.flaxengine.com/store/builds/Package_1_13_07012/Editor.zip
+
+jobs:
+  compile-against-official-flax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download the official Flax editor package (C# reference assembly)
+        run: |
+          curl -LfsS -o flax-editor.zip "$FLAX_RELEASE_URL"
+          python3 -m zipfile -e flax-editor.zip flax
+          test -f flax/Binaries/Editor/Win64/Development/FlaxEngine.CSharp.dll
+
+      - name: Ensure the engine's Newtonsoft.Json reference is present
+        run: |
+          DIR=flax/Source/Platforms/DotNet
+          if [ ! -f "$DIR/Newtonsoft.Json.dll" ]; then
+            mkdir -p "$DIR"
+            curl -LfsS -o ndj.zip "https://www.nuget.org/api/v2/package/Newtonsoft.Json/13.0.3"
+            python3 -m zipfile -e ndj.zip ndj
+            cp ndj/lib/net6.0/Newtonsoft.Json.dll "$DIR"/
+          fi
+
+      - name: Compile all plugin modules (warnings are errors; the tree builds clean)
+        run: dotnet build compat/FlaxAssetManager.Compat.csproj -c Development -p:EngineDir="$GITHUB_WORKSPACE/flax" -warnaserror

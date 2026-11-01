@@ -1,0 +1,66 @@
+name: Manifest / asset pack
+description: Publishing, hosting, or validating a manifest, index, or asset pack for this plugin.
+title: "[manifest] "
+labels:
+  - manifest
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with [`docs/MANIFEST_SPEC.md`](https://github.com/envision3d/FlaxAssetManager/blob/main/docs/MANIFEST_SPEC.md) and the working
+        examples (`Content/FlaxAssetManager/example_manifest.json`, `example_index.json`). Most
+        "the plugin shows nothing" reports are a spec mismatch, and the plugin logs the exact
+        validation failure - read that first.
+  - type: input
+    id: url
+    attributes:
+      label: Manifest / index / pack URL
+      description: HTTPS for remote sources, or a `file://` path for local testing.
+      placeholder: "https://example.com/flax/index.json"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is it?
+      options:
+        - Index (catalog of manifest URLs)
+        - Manifest (single asset source, list of packs)
+        - assetPack (zip / folder of files)
+        - gitRepo (Flax plugin project)
+    validations:
+      required: true
+  - type: textarea
+    id: packs
+    attributes:
+      label: Pack ids and files
+      description: A few pack ids and the files one pack serves, with the role names you mapped (baseColor, normal, metallic, roughness, ao, emissive, height, arm/ARM).
+      placeholder: |
+        wood_planks_02 -> wood_planks_02_{albedo,normal,rough,metal,ao,displacement,height,arm}.jpg
+        mapped: albedo->baseColor, normal->normal, metal->metallic, rough->roughness, ao->ao
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: What the plugin said
+      description: The log line from Window -> Flax Asset Manager -> Refresh, and what appeared in the list.
+      render: text
+  - type: textarea
+    id: license
+    attributes:
+      label: License and attribution
+      description: What license the content carries and how the plugin should surface it (it shows the manifest license fields, it does not verify them - see D2).
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: The JSON parses and passes the plugin's validation (the log says so).
+          required: true
+        - label: File URLs are reachable without credentials, or documented as private.
+          required: true
+        - label: Roles map to the spec; unused maps are marked, not invented.
+          required: true

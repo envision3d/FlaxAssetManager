@@ -1,0 +1,33 @@
+{
+  "sourceName": "Example index",
+  "sourceId": "com.example.index",
+  "sourceVersion": "1.0.0",
+  "description": "An index manifest: it links other manifests instead of listing assets, so one URL is a table of contents the owner updates freely. The user picks which entries to add as sources.",
+  "homepageUrl": "https://example.com",
+  "website": "https://example.com",
+  "manifestKind": "index",
+  "entries": [
+    {
+      "sourceId": "com.example.textures",
+      "sourceName": "Example textures",
+      "url": "https://example.com/manifests/textures.json",
+      "website": "https://example.com",
+      "description": "PBR texture sets",
+      "tags": ["textures", "PBR"]
+    },
+    {
+      "sourceId": "com.example.models",
+      "sourceName": "Example models",
+      "url": "https://example.com/manifests/models.json",
+      "description": "Environment models, imported as .flax meshes on install",
+      "tags": ["models"]
+    },
+    {
+      "sourceId": "com.example.plugins",
+      "sourceName": "Example plugin projects",
+      "url": "https://example.com/manifests/plugins.json",
+      "description": "Full plugin projects, installed by git clone - review before installing",
+      "tags": ["plugins"]
+    }
+  ]
+}
