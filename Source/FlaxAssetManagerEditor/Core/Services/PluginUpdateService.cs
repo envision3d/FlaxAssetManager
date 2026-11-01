@@ -179,7 +179,7 @@ namespace FlaxAssetManager.Core.Services
             if (dirty.Count > 0)
             {
                 var shown = dirty.Count <= 5 ? string.Join("\n", dirty) : string.Join("\n", dirty.GetRange(0, 5)) + $"\n... and {dirty.Count - 5} more";
-                return Refuse($"'{display}' has {dirty.Count} local change(s), so nothing was pulled:\n{shown}\n\nCommit or revert them first — a pull is not going to decide what happens to your edits.", status.Text);
+                return Refuse($"'{display}' has {dirty.Count} local change(s), so nothing was pulled:\n{shown}\n\nCommit or revert them first.", status.Text);
             }
 
             var symbolic = await GitRunner.RunAsync(new[] { "-C", folder, "symbolic-ref", "-q", "HEAD" }, PreflightTimeoutMs, ct);

@@ -54,6 +54,13 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
 
 ### Changed
 
+* **The Asset Manager's backdrop is a deep navy (`#061019`)** — the kit's `Theme` palette no longer reads
+  `Style.Current` (whose grey background fallback made the window look like the editor theme, not like the
+  plugin): every colour is now an explicit value, and `CreateUI` paints the window's root panel with `Bg`,
+  because its panels are transparent by default. `Bg` is `Metal(6f / 255f, 16f / 255f, 25f / 255f)` — Flax
+  `Color` stores floats, so hex has to go through them, and those divisions land on exactly 6/16/25 of 255.
+  `BgAlt` keeps a lighter value so the top bar and status bar stay distinct from the panel, and `Progress`
+  still follows `Style.Current` as the one colour that should track the editor's own accent.
 * **Adding a source reports in the status bar, not in a modal** — **Add linked source** confirmed the add
   with a `MessageBox`. On Linux that is the engine's platform message box, and Flax's SDL path only
   forwards the icon argument (`SDLPlatform.Linux.cpp`): the 3-arg `MessageBox.Show` the plugin called

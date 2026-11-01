@@ -158,6 +158,7 @@ namespace FlaxAssetManager.UI
             {
                 AnchorPreset = AnchorPresets.StretchAll,
                 Offsets = Margin.Zero,
+                BackgroundColor = Theme.Bg, // dark metallic blue backdrop for the whole window (panels are transparent by default)
                 Parent = this
             };
 
@@ -787,7 +788,7 @@ namespace FlaxAssetManager.UI
                 "Update Flax Asset Manager?\n\n" +
                 $"1. 'git pull --ff-only' runs in '{display}'.\n" +
                 "2. If that changed any files, the editor is asked to recompile the project scripts, which rebuilds and reloads this plugin's code.\n\n" +
-                "Save your work first - a scripts reload rebuilds the editor's plugin assemblies. Nothing is pulled into a checkout with local changes, a detached HEAD, no upstream branch, or a branch that has diverged from its remote; that case is reported and the folder is left alone.\n\n" +
+                "Save your work first - a scripts reload rebuilds the editor's plugin assemblies.\n\n" +
                 "Continue?";
             if (MessageBox.Show(confirm, "Update Flax Asset Manager", MessageBoxButtons.YesNo) != DialogResult.Yes)
                 return;
