@@ -91,8 +91,8 @@ The material pipeline needs no engine patch: it creates the material asset with 
 `Editor.CreateAsset("Material", path)` (the same creator the content browser uses) and builds the
 surface graph through the public editor Visject API in
 `Source/FlaxAssetManagerEditor/Core/Utils/MaterialGraphBuilder.cs` — the same node API the plugin
-already uses to rewire the graph (texture / Sample Texture / Unpack Float4 / Derive Normal Z
-chains, UV parameters).
+already uses to rewire the graph (texture / Sample Texture chains, the `Normal Map` decode chain
+ending in `Derive Normal Z`, UV parameters).
 
 ## Usage
 
@@ -117,7 +117,8 @@ model, script, audio, archive and plugin packs alike.
 **Texture packs get their material too** — for packs whose files are typed `MaterialTextures`,
 **Install** also imports the textures with role-appropriate import settings, creates the material,
 rewires the surface graph (`Texture → Sample Texture`, ARM maps split via `Unpack Float4`, normal
-maps decoded with `Derive Normal Z`), and assigns it to the pack's model slots. The button's tooltip
+maps sampled by a `Normal Map` node, whose decoded X,Y are scaled by `NormalStrength` before
+`Derive Normal Z` rebuilds the normal), and assigns it to the pack's model slots. The button's tooltip
 says when this will happen, and the details panel warns when a pack carries textures the material
 will not use (gloss, specular, cavity, curvature and ID maps have no role — see
 [`docs/DECISIONS.md`](docs/DECISIONS.md) D5).

@@ -33,7 +33,7 @@ Source/FlaxAssetManagerEditor/Core/Services/
   AssetInstallerService.cs  # SemaphoreSlim(6), SHA256, git clone into staging, zip extract (entry-name rule), reference injection; VariantSubFolder is the one layout authority (files/<variant>/ for a variant install), RemoveReplacedInstall + PruneStaleVariantFolders drop the set a variant switch replaces, PruneEmptyFolders prunes to the pack root; uninstall deletes files[] + generatedAssets + imported sidecars, then prunes the pack folder
 Source/FlaxAssetManagerEditor/Core/Services/MaterialCreatorService.cs # PBR role detection + surface-graph rewiring + model slot assignment (stock API, engine calls marshalled to the main thread); records the created M_<packId>.flax on the install entry (RecordGeneratedAsset)
 Source/FlaxAssetManagerEditor/Core/Services/PluginUpdateService.cs # self-update: git pull --ff-only in this plugin's own folder, then ScriptsBuilder.MarkWorkspaceDirty + Compile; refuses a dirty/detached/no-upstream checkout before writing; the folder is DISCOVERED by its project file (file name, or the Name inside it) — assembly ancestors, the open project's References, .installed.json records, a bounded Plugins/ scan, the documented location — never by an assumed folder name, and always contained inside Globals.ProjectFolder
-Source/FlaxAssetManagerEditor/Core/Utils/MaterialGraphBuilder.cs # creates the material asset (Editor.CreateAsset) and builds its PBR surface graph (root-box wiring, multipliers, public parameters); ValidateRootInputBoxes checks the hard-coded box ids against the engine's own box metadata before wiring
+Source/FlaxAssetManagerEditor/Core/Utils/MaterialGraphBuilder.cs # creates the material asset (Editor.CreateAsset) and builds its PBR surface graph (root-box wiring, multipliers, the normal-map decode chain, public parameters); ValidateRootInputBoxes checks the hard-coded box ids against the engine's own box metadata before wiring
   MaterialRoleDetector.cs # PBR role from file name (ARM aware)
   GitSafety.cs            # engine-free guards: https-only URL, git ref/commit validation, path containment (Ordinal on Linux)
   FlaxProjectLocator.cs   # engine-free *.flaxproj reader/finder: a project's Name field, identity by file name OR Name, $(ProjectPath)/$(EnginePath)/$(ProjectName) macro expansion of References, bounded BFS scan that skips Binaries/Cache/Source/…, ancestors walk from an assembly dir; case-correct path comparison
@@ -135,8 +135,10 @@ creator) and the surface graph is built in `Core/Utils/MaterialGraphBuilder.cs` 
 editor Visject API: texture nodes feeding the material root's boxes `Color 1 / Emissive 3 /
 Metalness 4 / Roughness 6 / AO 7 / Normal 8 / Opacity 9 / PositionOffset 11` (Height), a
 `Normal Map` node `(5,4)` for the normal map (it samples + decodes its own texture, so it cannot
-take a sampled one), `Color` constant `(2,7)`, `Multiply (3,3)`, `Get Parameter (6,1)`, and the
-public parameters `Color` / `EmissiveColor` / `NormalStrength` added via `context.Parameters`.
+take a sampled one) feeding the decode chain `Unpack Float4 (4,32) → Pack Float2 (4,20) → Multiply
+(3,3)` by `NormalStrength` → `Derive Normal Z (3,29)` → the Normal input, a `Color` constant `(2,7)`,
+`Multiply (3,3)`, `Get Parameter (6,1)`, and the public parameters `Color` / `EmissiveColor` /
+`NormalStrength` added via `context.Parameters`.
 
 These ids are engine-internal (`MaterialNodeBoxes` is not public), so `ValidateRootInputBoxes` checks
 each root box (present, is an input, expected value type) against the engine's live box metadata before
@@ -198,9 +200,10 @@ Kept as a record of what the guards below are defending, so they are not "simpli
   `Ordinal` on Linux/macOS, `OrdinalIgnoreCase` only on Windows.
 - **Manifest `type` is name-only.** `FileAssetTypeConverter` rejects numeric strings first, so
   `"type": "5"` no longer silently resolves to `Script` (the spec's "unknown must fail").
-- **Normal Map node without a texture is non-fatal.** `RewireNormalMap` returns
-  `NormalMapRewriteResult` (`Rewired`/`Skipped`/`Failed`); a texture-less node is left alone instead
-  of aborting the whole material rewire, and a failing surface save is reported (not thrown into UI).
+- **A normal map is never rewired.** `MaterialGraphBuilder` owns its chain (`Normal Map → Unpack
+  Float4 → Pack Float2 → × NormalStrength → Derive Normal Z → Normal`): the `Normal Map` node samples +
+  decodes its own texture, so `InsertSamplingNodes` leaves that graph alone and only feeds the node's
+  UVs input with the shared UV transform, and a failing surface save is reported (not thrown into UI).
 - **Every read is bounded, not just pack files.** `HttpStream.DownloadTextAsync` caps a manifest at
   8 MiB and an index/linked manifest at 16 MiB; `DownloadPreviewAsync` caps preview images and audio at
   64 MiB. A manifest over the cap is refused as invalid, so a hostile source cannot make the editor

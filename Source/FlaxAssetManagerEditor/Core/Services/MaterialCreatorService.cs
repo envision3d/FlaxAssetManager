@@ -33,18 +33,17 @@ namespace FlaxAssetManager.Core.Services
     /// directly: every texture is routed through a <c>Sample Texture</c> node, and a combined ARM
     /// map (R = AmbientOcclusion, G = Roughness, B = Metallic) is sampled once and routed through a
     /// single <c>Unpack Float4</c> node (X -> Ambient Occlusion, Y -> Roughness, Z -> Metallic).
-    /// A <c>Normal Map</c> node cannot be routed through a <c>Sample Texture</c> node: it holds
-    /// its texture as an asset value and samples + decodes it internally, with no texture input
-    /// box. So each <c>Normal Map</c> node is replaced by the same texture-sampling chain the other
-    /// textures use, plus a decode: <c>Texture -> Sample Texture -> Unpack Float4 -> Pack Float2 ->
-    /// Mad(rg, 2, -1) -> Derive Normal Z</c>, where the <c>Mad</c> converts R,G from [0;1] to
-    /// [-1;1]. The <c>Sample Texture</c> node receives the shared UV transform and the
-    /// <c>Derive Normal Z</c> node reproduces the <c>Normal Map</c> node's decode, feeding the Normal
-    /// input (or the NormalStrength chain).
+    /// A <c>Normal Map</c> node is never routed through a <c>Sample Texture</c> node: it holds its
+    /// texture as an asset value and samples + decodes it internally (the HLSL the engine generates for
+    /// it is <c>UnpackNormalMap(rg)</c>), so it has no texture input box to feed. A normal map therefore
+    /// keeps the chain <see cref="MaterialGraphBuilder"/> built for it - <c>Normal Map -> Unpack Float4
+    /// -> Pack Float2 -> x NormalStrength -> Derive Normal Z -> Normal input</c> - and this pass only
+    /// feeds the <c>Normal Map</c> node's UVs input with the shared UV transform.
     ///
     /// Two public Float2 parameters, "UV Scale" (default (1,1)) and "UV Tiling" (default (0,0)),
-    /// are exposed and fed to every <c>Sample Texture</c> node's UVs input as
-    /// <c>UV * UV Scale + UV Tiling</c>, so all texture sampling can be scaled and offset at once.
+    /// are exposed and fed to every sampler's UVs input (every <c>Sample Texture</c> node and every
+    /// <c>Normal Map</c> node) as <c>UV * UV Scale + UV Tiling</c>, so all texture sampling can be
+    /// scaled and offset at once.
     ///
     /// Every surface graph write is followed by an asset <c>Reload</c> + <c>WaitForLoaded</c>, performed by
     /// <c>MaterialGraphBuilder.MaterialSurfaceOwner.SurfaceData</c>: <c>Material.SaveSurface</c> only writes
@@ -287,12 +286,11 @@ namespace FlaxAssetManager.Core.Services
         private const ushort UnpackFloat4Type = 32;
 
         // Normal Map node (group 5, type 4): holds the normal texture as an asset value (Values[0])
-        // and samples + decodes the encoded tangent-space vector itself. Output box 1 = Vector
-        // (the decoded Float3 normal); input box 0 = UVs.
-        private const ushort NormalMapGroup = 5;
-        private const ushort NormalMapType = 4;
+        // and samples + decodes the encoded tangent-space vector itself, so a normal map needs no
+        // Sample Texture node. Input box 0 = UVs (the shared UV transform feeds it); output box 1 =
+        // Vector (the decoded Float3 normal), which the graph builder's decode chain consumes.
         private const uint NormalMapNodeType = (5u << 16) | 4;
-        private const int NormalMapBoxVector = 1;
+        private const int NormalMapBoxUVs = 0;
 
         // Material root node input boxes a combined ARM texture may feed.
         private const int RootBoxMetalness = 4;
@@ -319,20 +317,6 @@ namespace FlaxAssetManager.Core.Services
         private const int UnpackBoxY = 2;
         private const int UnpackBoxZ = 3;
 
-        // Pack Float2 node (group 4, type 20): 0 = Value (out), 1 = X (in), 2 = Y (in).
-        private const ushort PackFloat2Group = 4;
-        private const ushort PackFloat2Type = 20;
-        private const int PackBoxValue = 0;
-        private const int PackBoxX = 1;
-        private const int PackBoxY = 2;
-
-        // Derive Normal Z node (group 3, type 29): 0 = XY (Float2 in), 1 = XYZ (Float3 out).
-        // Reproduces the Normal Map node's decode of an encoded tangent-space normal.
-        private const ushort DeriveNormalZGroup = 3;
-        private const ushort DeriveNormalZType = 29;
-        private const int DeriveNormalZBoxXY = 0;
-        private const int DeriveNormalZBoxXYZ = 1;
-
         // Texcoords node (group 5, type 2): base UV source, box 0 = UVs (Float2 out).
         private const ushort TexcoordsGroup = 5;
         private const ushort TexcoordsType = 2;
@@ -353,13 +337,6 @@ namespace FlaxAssetManager.Core.Services
         private const int MathBoxB = 1;
         private const int MathBoxResult = 2;
 
-        // Math group (3) Mad (type 31): computes A * B + C. 0 = Value (A, in),
-        // 1 = Multiply (B, in), 2 = Add (C, in), 3 = Result (out). B and C are constant
-        // values on the node (Values[0] and Values[1]).
-        private const ushort MadType = 31;
-        private const int MadBoxValue = 0;
-        private const int MadBoxOutput = 3;
-
         // Sample Texture node UVs input.
         private const int SampleBoxUVs = 1;
 
@@ -369,10 +346,10 @@ namespace FlaxAssetManager.Core.Services
         /// node feeds its destination directly: every texture is routed through a <c>Sample
         /// Texture</c> node, and a combined ARM texture is routed through a single <c>Texture</c>
         /// + <c>Sample Texture</c> + <c>Unpack Float4</c> chain (X -> Ambient Occlusion,
-        /// Y -> Roughness, Z -> Metallic). Each <c>Normal Map</c> node (which samples + decodes
-        /// its texture internally and cannot take a sampled texture) is replaced by a
-        /// <c>Texture -> Sample Texture -> Unpack Float4 -> Pack Float2 -> Derive Normal Z</c>
-        /// chain, so the normal map is sampled by a <c>Sample Texture</c> node like every other texture.
+        /// Y -> Roughness, Z -> Metallic). A <c>Normal Map</c> node is left exactly as the graph builder
+        /// wired it: it holds its texture as an asset value and samples + decodes it internally, with no
+        /// texture input box to feed, so it takes no <c>Sample Texture</c> node - the shared UV transform
+        /// on its own UVs input is all this pass has to do for a normal map.
         /// </summary>
         /// <param name="materialId">The id of the material asset to rewire.</param>
         /// <param name="combinedArm">The id of the combined ARM texture to wire (if any), routed through
@@ -424,8 +401,9 @@ namespace FlaxAssetManager.Core.Services
                         textureNodes.Add(node);
                 }
 
-                // Collect the Normal Map nodes: each one is replaced by a texture-sampling chain
-                // (it samples + decodes its texture internally and cannot take a sampled texture).
+                // Collect the Normal Map nodes: a Normal Map node holds its texture and samples +
+                // decodes it internally, so the normal chain the graph builder wired is left intact and
+                // only the node's UVs input joins the shared UV transform below.
                 var normalMapNodes = new List<SurfaceNode>();
                 foreach (var node in context.Nodes)
                 {
@@ -520,23 +498,17 @@ namespace FlaxAssetManager.Core.Services
                     WireArmChannel(armUnpack, root, UnpackBoxZ, RootBoxMetalness);
                 }
 
-                // Replace every Normal Map node with a texture-sampling chain so the normal map is
-                // sampled by a Sample Texture node like every other texture. The new sampler is
-                // appended to sampleNodes, so the UV transform below reaches it.
-                foreach (var normalMap in normalMapNodes)
-                {
-                    // A Normal Map node without a texture is left as the engine created it - that is
-                    // not a failure, and must not abort the rest of the rewiring.
-                    if (RewireNormalMap(context, material, normalMap, sampleNodes) == NormalMapRewriteResult.Failed)
-                        return false;
-                }
-
-                // Expose "UV Scale" and "UV Tiling" as public Float2 material parameters and feed
-                // every Sample Texture node's UVs input with (UV * UV Scale + UV Tiling), so all
-                // texture sampling can be scaled and offset at once.
+                // Expose "UV Scale" and "UV Tiling" as public Float2 material parameters and feed every
+                // sampler's UVs input with (UV * UV Scale + UV Tiling), so all texture sampling can be
+                // scaled and offset at once. The Sample Texture nodes created above are the consumers for
+                // the rewired texture nodes, and a Normal Map node - which samples its own texture, so it
+                // has no Sample Texture node - is the consumer for a normal map, taking the transform on
+                // its own UVs input.
                 var uvConsumers = new List<(SurfaceNode Node, int UvBox)>();
                 foreach (var sample in sampleNodes)
                     uvConsumers.Add((sample, SampleBoxUVs));
+                foreach (var normalMap in normalMapNodes)
+                    uvConsumers.Add((normalMap, NormalMapBoxUVs));
 
                 if (!WireUvTransforms(context, uvConsumers))
                     return false;
@@ -583,124 +555,8 @@ namespace FlaxAssetManager.Core.Services
         }
 
         /// <summary>
-        /// Outcome of <see cref="RewireNormalMap"/>: the node was replaced, was left untouched
-        /// (not a failure), or the replacement could not be completed.
-        /// </summary>
-        private enum NormalMapRewriteResult
-        {
-            Rewired,
-            Skipped,
-            Failed,
-        }
-
-        /// <summary>
-        /// Replaces a <c>Normal Map</c> node with a texture-sampling chain so the normal texture is
-        /// sampled by a <c>Sample Texture</c> node like every other texture, then decoded. A
-        /// <c>Normal Map</c> node holds its texture as an asset value and samples + decodes it
-        /// internally with no texture input box, so it cannot take a sampled texture; it is
-        /// therefore replaced by <c>Texture -> Sample Texture -> Unpack Float4 -> Pack Float2 ->
-        /// Mad(rg, 2, -1) -> Derive Normal Z</c>. A <c>Mad</c> node converts the sampled R,G channels
-        /// from the [0;1] texture range to the [-1;1] range that <c>Derive Normal Z</c> expects,
-        /// reproducing the <c>Normal Map</c> node's decode. The <c>Sample Texture</c> node is appended
-        /// to <paramref name="sampleNodes"/> so it receives the shared UV transform, and the
-        /// <c>Derive Normal Z</c> node feeds every consumer the old node's Vector output fed.
-        /// </summary>
-        /// <param name="context">The surface context.</param>
-        /// <param name="material">The material (for log messages).</param>
-        /// <param name="normalMap">The Normal Map node to replace.</param>
-        /// <param name="sampleNodes">The Sample Texture nodes that receive the UV transform; the new
-        /// normal-map sampler is appended here.</param>
-        /// <returns><see cref="NormalMapRewriteResult.Rewired"/> when the node was replaced,
-        /// <see cref="NormalMapRewriteResult.Skipped"/> when it was left untouched (not a fatal
-        /// error), or <see cref="NormalMapRewriteResult.Failed"/> when the replacement failed.</returns>
-        private NormalMapRewriteResult RewireNormalMap(VisjectSurfaceContext context, Material material, SurfaceNode normalMap, List<SurfaceNode> sampleNodes)
-        {
-            // The Normal Map node stores the normal texture as its first asset value.
-            if (normalMap.Values == null || normalMap.Values.Length == 0
-                || normalMap.Values[0] is not Guid textureId || textureId == Guid.Empty)
-            {
-                Debug.LogWarning($"FlaxAssetManager: Normal Map node in material '{material}' has no texture asset; leaving it untouched.");
-                return NormalMapRewriteResult.Skipped;
-            }
-
-            var origin = normalMap.Location;
-
-            // Texture node holding the normal texture.
-            var texture = context.SpawnNode(TextureGroup, TextureType, origin - new Float2(720.0f, 0.0f), new object[] { textureId });
-            if (texture == null)
-            {
-                Debug.LogError($"FlaxAssetManager: failed to spawn the normal-map texture node in material '{material}'.");
-                return NormalMapRewriteResult.Failed;
-            }
-
-            // Sample Texture node sampling the texture (receives the shared UV transform).
-            var sample = context.SpawnNode(SampleTextureGroup, SampleTextureType, origin - new Float2(480.0f, 0.0f), SampleTextureValues);
-            if (sample == null)
-            {
-                Debug.LogError($"FlaxAssetManager: failed to spawn the normal-map Sample Texture node in material '{material}'.");
-                return NormalMapRewriteResult.Failed;
-            }
-
-            // Unpack the sampled Float4 color into its channels.
-            var unpack = context.SpawnNode(UnpackFloat4Group, UnpackFloat4Type, origin - new Float2(240.0f, 0.0f));
-            if (unpack == null)
-            {
-                Debug.LogError($"FlaxAssetManager: failed to spawn the normal-map Unpack Float4 node in material '{material}'.");
-                return NormalMapRewriteResult.Failed;
-            }
-
-            // Pack the R and G channels into a Float2.
-            var pack = context.SpawnNode(PackFloat2Group, PackFloat2Type, origin);
-            if (pack == null)
-            {
-                Debug.LogError($"FlaxAssetManager: failed to spawn the normal-map Pack Float2 node in material '{material}'.");
-                return NormalMapRewriteResult.Failed;
-            }
-
-            // Convert R,G from the [0;1] texture range to [-1;1] (rg * 2 - 1).
-            var mad = context.SpawnNode(MathGroup, MadType, origin + new Float2(240.0f, 0.0f), new object[] { 2.0f, -1.0f });
-            if (mad == null)
-            {
-                Debug.LogError($"FlaxAssetManager: failed to spawn the normal-map Mad node in material '{material}'.");
-                return NormalMapRewriteResult.Failed;
-            }
-
-            // Derive the Z component to reconstruct the tangent-space normal.
-            var derive = context.SpawnNode(DeriveNormalZGroup, DeriveNormalZType, origin + new Float2(480.0f, 0.0f));
-            if (derive == null)
-            {
-                Debug.LogError($"FlaxAssetManager: failed to spawn the normal-map Derive Normal Z node in material '{material}'.");
-                return NormalMapRewriteResult.Failed;
-            }
-
-            texture.GetBox(TextureBoxObject).CreateConnection(sample.GetBox(SampleBoxTextureInput));
-            sample.GetBox(SampleBoxColor).CreateConnection(unpack.GetBox(UnpackBoxValue));
-            unpack.GetBox(UnpackBoxX).CreateConnection(pack.GetBox(PackBoxX));
-            unpack.GetBox(UnpackBoxY).CreateConnection(pack.GetBox(PackBoxY));
-            pack.GetBox(PackBoxValue).CreateConnection(mad.GetBox(MadBoxValue));
-            mad.GetBox(MadBoxOutput).CreateConnection(derive.GetBox(DeriveNormalZBoxXY));
-
-            // Feed the decoded normal to every consumer the Normal Map's Vector output fed.
-            var vectorBox = normalMap.GetBox(NormalMapBoxVector);
-            if (vectorBox != null)
-            {
-                foreach (var consumer in vectorBox.Connections.ToList())
-                    derive.GetBox(DeriveNormalZBoxXYZ).CreateConnection(consumer);
-            }
-
-            sampleNodes.Add(sample);
-
-            // Remove the now-redundant Normal Map node.
-            normalMap.RemoveConnections();
-            context.Nodes.Remove(normalMap);
-            context.MarkAsModified();
-
-            return NormalMapRewriteResult.Rewired;
-        }
-
-        /// <summary>
-        /// Exposes public Float2 material parameters "UV Scale" and "UV Tiling" and feeds every
-        /// <c>Sample Texture</c> node's UVs input with
+        /// Exposes public Float2 material parameters "UV Scale" and "UV Tiling" and feeds every sampler's
+        /// UVs input - every <c>Sample Texture</c> node and every <c>Normal Map</c> node - with
         /// <c>UV * UV Scale + UV Tiling</c>. A shared <c>Texcoords</c> node supplies the base UV and
         /// two <c>Get Parameter</c> nodes supply the parameters; per-consumer <c>Multiply</c> +
         /// <c>Add</c> nodes produce the transformed UV.
@@ -735,15 +591,15 @@ namespace FlaxAssetManager.Core.Services
             }
 
             // Per consumer: (UV * UV Scale + UV Tiling) -> the node's UVs input.
-            foreach (var (sample, uvBox) in uvConsumers)
+            foreach (var (node, uvBox) in uvConsumers)
             {
-                var multiply = context.SpawnNode(MathGroup, MultiplyType, sample.Location + new Float2(-40.0f, -340.0f));
+                var multiply = context.SpawnNode(MathGroup, MultiplyType, node.Location + new Float2(-40.0f, -340.0f));
                 if (multiply == null)
                 {
                     Debug.LogError("FlaxAssetManager: failed to spawn a UV Multiply node in the material surface.");
                     return false;
                 }
-                var add = context.SpawnNode(MathGroup, AddType, sample.Location + new Float2(200.0f, -340.0f));
+                var add = context.SpawnNode(MathGroup, AddType, node.Location + new Float2(200.0f, -340.0f));
                 if (add == null)
                 {
                     Debug.LogError("FlaxAssetManager: failed to spawn a UV Add node in the material surface.");
@@ -754,7 +610,7 @@ namespace FlaxAssetManager.Core.Services
                 getScale.GetBox(ParamBoxValue).CreateConnection(multiply.GetBox(MathBoxB));
                 multiply.GetBox(MathBoxResult).CreateConnection(add.GetBox(MathBoxA));
                 getTiling.GetBox(ParamBoxValue).CreateConnection(add.GetBox(MathBoxB));
-                add.GetBox(MathBoxResult).CreateConnection(sample.GetBox(uvBox));
+                add.GetBox(MathBoxResult).CreateConnection(node.GetBox(uvBox));
             }
 
             return true;

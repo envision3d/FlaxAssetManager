@@ -24,9 +24,12 @@ twice led code back to them.
 Implemented in plugin code (it is material *policy*):
 
 - texture nodes → root boxes `Color 1 / Emissive 3 / Metalness 4 / Roughness 6 / AO 7 / Normal 8 /
-  Opacity 9 / PositionOffset 11` (Height), plus `Normal Map (5,4)` for the normal map;
+  Opacity 9 / PositionOffset 11` (Height), plus `Normal Map (5,4)` for the normal map — it samples +
+  decodes its own texture, so its decoded X,Y go `Unpack Float4` → `Pack Float2` → × `NormalStrength`
+  → `Derive Normal Z` → Normal;
 - public parameters `Color` (white), `EmissiveColor` (black = no emission; drives the Emissive input
-  directly when the pack ships no emissive map) and `NormalStrength` (1);
+  directly when the pack ships no emissive map) and `NormalStrength` (1; scales the normal's
+  tangent-space XY before Z is re-derived);
 - the created asset id, read back with `Content.GetAssetInfo` instead of a native out-param.
 
 Consequences: material creation is enabled from the pack's `MaterialTextures` again (the

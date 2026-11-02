@@ -104,6 +104,12 @@ Material (needs an editor build; the only part with no automated coverage beyond
 
 * [ ] Open the generated material: boxes wired, texture visible, parameters **Color**,
       **EmissiveColor**, **NormalStrength**, **UV Scale**, **UV Tiling** present and editable.
+* [ ] The normal map is sampled by a **Normal Map** node (not a plain **Texture**), its decoded X,Y are
+      scaled by **NormalStrength**, and a **Derive Normal Z** node feeds the Normal input. Set
+      **NormalStrength** to 0 (the surface flattens to its shading normal) and to 2 (it bends, without
+      losing the encode): a plain **Mad** node in this chain, or a **Texture** node sampling the normal
+      map, means the graph is back to the shape this fix removed — the normal decode belongs to the
+      **Normal Map** node, which applies it itself.
 * [ ] Install a pack whose textures have no detectable roles: no material, one clear log line, files
       installed.
 

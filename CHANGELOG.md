@@ -102,6 +102,18 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
   the guardrail in place of the old symbol names: every engine symbol the plugin calls must exist in the
   Flax 1.13 release sources, checked by the `compat/` build. Naming symbols absent from a release had
   pulled code back to them twice.
+* **A pack material samples its normal map with a `Normal Map` node, and `NormalStrength` scales the
+  tangent-space XY** — the Normal input is now fed `Normal Map (5,4) → Unpack Float4 (4,32) → Pack
+  Float2 (4,20) → Multiply (3,3) by NormalStrength → Derive Normal Z (3,29) → Normal`. The graph used to
+  sample the normal with a plain `Texture` + `Sample Texture` pair and rebuild the vector with a
+  `Mad(rg, 2, -1)` node: the `Normal Map` node **is** the engine's normal-map sampler — the HLSL it
+  generates is `UnpackNormalMap(rg)`, which converts R,G to [-1;1] and derives Z — so that `Mad` was a
+  decode the sampler had already applied, and a `Texture` node sampled the map in a way that contradicted
+  the texture's own import type (a normal map imports as `NormalMap`). Scaling the decoded `Float3`, as
+  the builder first did, scaled Z too, so raising strength flattened the surface towards the shading
+  normal instead of bending it; scaling the packed X,Y and letting `Derive Normal Z` rebuild Z is what
+  strength means for a normal map. The sampling pass leaves that chain intact and feeds the `Normal Map`
+  node's UVs input with the shared UV transform, so a normal map is tiled and offset like every texture.
 
 ### Fixed
 * **A generated material renders as soon as it is created** — installing a texture pack built the material

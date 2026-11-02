@@ -34,7 +34,8 @@ namespace FlaxAssetManager.Core.Utils
         /// <summary>Height / displacement texture, fed to the Position Offset input.</summary>
         public Guid Height;
 
-        /// <summary>Normal map texture (via a <c>Normal Map</c> node scaled by "NormalStrength").</summary>
+        /// <summary>Normal map texture, sampled by a <c>Normal Map</c> node whose decoded X,Y are
+        /// scaled by "NormalStrength" and rebuilt by <c>Derive Normal Z</c> into the Normal input.</summary>
         public Guid Normal;
     }
 
@@ -54,18 +55,22 @@ namespace FlaxAssetManager.Core.Utils
     /// The graph shape mirrors a material built by the engine's own material import: a
     /// <c>Texture</c> node per PBR slot feeding the material root's input box (a bare default
     /// material has no exposed parameters to set, so a graph is the only way to assign textures),
-    /// a multiply node for the colour multipliers, and a <c>Normal Map</c> node for the normal map
-    /// (it samples and decodes its own texture, so it cannot take a sampled texture). The public
-    /// multipliers are exposed as material parameters ("Color" = white, "EmissiveColor" = black so
-    /// any material can gain emission, "NormalStrength" = 1) instead of hardcoded constants.
+    /// a multiply node for the colour multipliers, and the normal map driven by a <c>Normal Map</c>
+    /// node (it samples and decodes its own texture, so it cannot take a sampled texture) whose
+    /// decoded X,Y are scaled by "NormalStrength" and fed to a <c>Derive Normal Z</c> node that
+    /// rebuilds Z before the Normal input. The public multipliers are exposed as material parameters
+    /// ("Color" = white, "EmissiveColor" = black so any material can gain emission,
+    /// "NormalStrength" = 1) instead of hardcoded constants.
     ///
     /// Keeping this in the plugin is deliberate: it is the plugin's material *policy* (which slots
     /// to wire, which parameters to expose, which nodes to spawn), and doing it with public API
     /// means the plugin compiles and runs against a stock engine build.
     ///
     /// The surface graph built here is the *input* to
-    /// <c>MaterialCreatorService.InsertSamplingNodes</c>, which then routes every texture through a
-    /// <c>Sample Texture</c> node and adds the shared UV transform.
+    /// <c>MaterialCreatorService.InsertSamplingNodes</c>, which routes every <c>Texture</c> node
+    /// through a <c>Sample Texture</c> node and adds the shared UV transform. A <c>Normal Map</c> node
+    /// is left as it was built: it samples its own texture, so it takes no <c>Sample Texture</c> node
+    /// and only its UVs input joins that transform.
     ///
     /// Both surface writes <b>apply</b> what they saved: <see cref="Material.SaveSurface"/> only writes
     /// the asset file, so <see cref="MaterialSurfaceOwner.SurfaceData"/> follows it with
@@ -107,6 +112,14 @@ namespace FlaxAssetManager.Core.Utils
         private const ushort ParameterGroup = 6;
         private const ushort GetParameterType = 1;
 
+        // The normal-map decode chain nodes. Their ids are the engine's own archetype type ids
+        // (Source/Editor/Surface/Archetypes/Packing.cs and Math.cs): "Pack Float2" (4,20),
+        // "Unpack Float4" (4,32) and "Derive Normal Z" (3,29).
+        private const ushort PackingGroup = 4;
+        private const ushort PackFloat2Type = 20;
+        private const ushort UnpackFloat4Type = 32;
+        private const ushort DeriveNormalZType = 29;
+
         // Texture node boxes: 0 = UVs, 1 = Color, 2..5 = R/G/B/A, 6 = texture object reference.
         private const int TextureBoxColor = 1;
         // Normal Map node: 0 = UVs, 1 = the decoded Vector normal.
@@ -119,6 +132,19 @@ namespace FlaxAssetManager.Core.Utils
         private const int MultiplyBoxResult = 2;
         // Get Parameter node: box 0 outputs the parameter value (its type follows the parameter).
         private const int GetParamBoxValue = 0;
+
+        // Unpack Float4 node: 0 = Value (Float4 in), 1 = X, 2 = Y, 3 = Z, 4 = W.
+        private const int UnpackFloat4BoxValue = 0;
+        private const int UnpackFloat4BoxX = 1;
+        private const int UnpackFloat4BoxY = 2;
+        // Pack Float2 node: 0 = Value (Float2 out), 1 = X (in), 2 = Y (in).
+        private const int PackFloat2BoxValue = 0;
+        private const int PackFloat2BoxX = 1;
+        private const int PackFloat2BoxY = 2;
+        // Derive Normal Z node: 0 = XY (Float2 in), 1 = XYZ (Float3 out). It rebuilds Z from the
+        // two tangent-space normal channels, so it is the node that turns a scaled XY back into a normal.
+        private const int DeriveNormalZBoxXY = 0;
+        private const int DeriveNormalZBoxXYZ = 1;
         /// <summary>
         /// The material-root input boxes this builder wires: the box id, the label the engine gives that
         /// box, and the value types it accepts. The ids are NOT public API - in Flax 1.13 they live in the
@@ -156,6 +182,17 @@ namespace FlaxAssetManager.Core.Utils
         private const float NearColumn = -480.0f;
         private const float FarColumn = -760.0f;
 
+        // The normal-map decode chain, laid out left to right: the Normal Map node (140 wide) feeds
+        // an Unpack Float4, whose X,Y a Pack Float2 re-joins, a Multiply scales that XY by
+        // "NormalStrength", and Derive Normal Z (the last column, 170 wide) rebuilds Z before the
+        // Normal input. The strength parameter sits above its Multiply, on a row of its own.
+        private static readonly Float2 NormalSourceLocation = new Float2(FarColumn, -460.0f);
+        private static readonly Float2 NormalUnpackLocation = new Float2(-560.0f, -460.0f);
+        private static readonly Float2 NormalPackLocation = new Float2(-380.0f, -460.0f);
+        private static readonly Float2 NormalStrengthLocation = new Float2(-380.0f, -300.0f);
+        private static readonly Float2 NormalScaleLocation = new Float2(-200.0f, -460.0f);
+        private static readonly Float2 NormalDeriveLocation = new Float2(-200.0f, -300.0f);
+
         /// <summary>
         /// Creates (or overwrites) a PBR material asset at <paramref name="assetFullPath"/> and
         /// wires <paramref name="slots"/> into its surface graph in one pass. Overwriting reuses
@@ -179,8 +216,8 @@ namespace FlaxAssetManager.Core.Utils
         /// input directly when the pack ships no emissive texture, so any material can gain emission.
         /// </param>
         /// <param name="exposeNormalStrengthParameter">
-        /// When true and a normal texture is given, the normal is scaled by a public
-        /// "NormalStrength" parameter (default 1) before reaching the Normal input.
+        /// When true and a normal texture is given, the decoded normal's tangent-space XY is scaled by a
+        /// public "NormalStrength" parameter (default 1) before <c>Derive Normal Z</c> rebuilds Z.
         /// </param>
         /// <returns>True when the material was created, wired and saved.</returns>
         public static bool TryCreate(string assetFullPath,
@@ -402,36 +439,91 @@ namespace FlaxAssetManager.Core.Utils
             if (slots.Height != Guid.Empty && !WireTextureInput(context, root, slots.Height, RootBoxPositionOffset, origin + new Float2(NearColumn, 660.0f), "height", material))
                 return false;
 
-            // Normal: a Normal Map node (it samples + decodes its own texture) feeding the Normal
-            // input, optionally through a "NormalStrength" scale. The service's post-processing
-            // replaces this node with a sampling chain and re-feeds whatever its output fed, so
-            // wiring it into the scale node here stays consistent.
-            if (slots.Normal != Guid.Empty)
+            // Normal: sampled and decoded by a Normal Map node (it holds the texture as an asset
+            // value and decodes the tangent-space vector itself, so it takes no texture input box and
+            // no Sample Texture node), scaled by "NormalStrength" and rebuilt by Derive Normal Z.
+            if (slots.Normal != Guid.Empty && !WireNormalInput(context, root, slots.Normal, exposeNormalStrengthParameter, origin, material))
+                return false;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Wires a normal map into the material root's Normal input as
+        /// <c>Normal Map -> Unpack Float4 -> Pack Float2 -> (x "NormalStrength") -> Derive Normal Z -> Normal</c>.
+        /// The <c>Normal Map</c> node is the sampler: it holds the texture as its asset value, samples
+        /// it and decodes the encoded tangent-space vector itself (the HLSL the engine generates for it
+        /// is <c>UnpackNormalMap(rg)</c> = <c>rg * 2 - 1</c> with Z rebuilt), so its Vector output is
+        /// already a normal in [-1;1] - the chain needs no <c>Texture</c> + <c>Sample Texture</c> nodes
+        /// and no [0;1] -> [-1;1] remap, and a normal map is sampled by a <c>Normal Map</c> node, which
+        /// is what the texture's import settings (it imports as a <c>Normal Map</c> texture) describe.
+        /// Only its X,Y are kept (<c>Unpack Float4</c> + <c>Pack Float2</c>) because normal strength is a
+        /// tangent-space XY scale: scaling the decoded <c>Float3</c> would scale Z too, so strength 2
+        /// would flatten the surface towards the shading normal instead of bending it. <c>Derive Normal
+        /// Z</c> rebuilds Z from the scaled channels, so the Normal input is fed a normal at any
+        /// strength; the parameter's default of 1 leaves the decoded normal untouched.
+        /// </summary>
+        private static bool WireNormalInput(VisjectSurfaceContext context,
+                                            SurfaceNode root,
+                                            Guid normalTextureId,
+                                            bool exposeNormalStrengthParameter,
+                                            Float2 origin,
+                                            Material material)
+        {
+            // The sampler: holds the texture and decodes it, exposing the normal on its Vector box.
+            var normalMap = context.SpawnNode(TextureGroup, NormalMapType, origin + NormalSourceLocation, new object[] { normalTextureId });
+            if (normalMap == null)
             {
-                var normalMap = context.SpawnNode(TextureGroup, NormalMapType, origin + new Float2(FarColumn, -460.0f), new object[] { slots.Normal });
-                if (normalMap == null)
+                Debug.LogError($"FlaxAssetManager: failed to spawn the Normal Map node in material '{material}'.");
+                return false;
+            }
+
+            // Keep the decoded X,Y: unpack the vector, then pack the two channels back into a Float2.
+            var unpack = context.SpawnNode(PackingGroup, UnpackFloat4Type, origin + NormalUnpackLocation);
+            if (unpack == null)
+            {
+                Debug.LogError($"FlaxAssetManager: failed to spawn the normal-map Unpack Float4 node in material '{material}'.");
+                return false;
+            }
+
+            var pack = context.SpawnNode(PackingGroup, PackFloat2Type, origin + NormalPackLocation);
+            if (pack == null)
+            {
+                Debug.LogError($"FlaxAssetManager: failed to spawn the normal-map Pack Float2 node in material '{material}'.");
+                return false;
+            }
+
+            normalMap.GetBox(NormalMapBoxVector).CreateConnection(unpack.GetBox(UnpackFloat4BoxValue));
+            unpack.GetBox(UnpackFloat4BoxX).CreateConnection(pack.GetBox(PackFloat2BoxX));
+            unpack.GetBox(UnpackFloat4BoxY).CreateConnection(pack.GetBox(PackFloat2BoxY));
+
+            // Scale the tangent-space XY by the public "NormalStrength" parameter (default 1).
+            var normalXY = pack.GetBox(PackFloat2BoxValue);
+            if (exposeNormalStrengthParameter)
+            {
+                var strength = SpawnGetParameter(context, EnsureParameter(context, NormalStrengthParameterName, new ScriptType(typeof(float)), 1.0f), origin + NormalStrengthLocation);
+                var scale = SpawnMultiply(context, origin + NormalScaleLocation);
+                if (strength == null || scale == null)
                 {
-                    Debug.LogError($"FlaxAssetManager: failed to spawn the Normal Map node in material '{material}'.");
+                    Debug.LogError($"FlaxAssetManager: failed to spawn the {NormalStrengthParameterName} scale nodes in material '{material}'.");
                     return false;
                 }
 
-                var normalOut = normalMap.GetBox(NormalMapBoxVector);
-                if (exposeNormalStrengthParameter)
-                {
-                    var strength = SpawnGetParameter(context, EnsureParameter(context, NormalStrengthParameterName, new ScriptType(typeof(float)), 1.0f), origin + new Float2(FarColumn + 150.0f, -320.0f));
-                    var scale = SpawnMultiply(context, origin + new Float2(NearColumn - 120.0f, -460.0f));
-                    if (strength == null || scale == null)
-                    {
-                        Debug.LogError($"FlaxAssetManager: failed to spawn the {NormalStrengthParameterName} scale nodes in material '{material}'.");
-                        return false;
-                    }
-                    normalOut.CreateConnection(scale.GetBox(MultiplyBoxA));
-                    strength.GetBox(GetParamBoxValue).CreateConnection(scale.GetBox(MultiplyBoxB));
-                    normalOut = scale.GetBox(MultiplyBoxResult);
-                }
-                normalOut.CreateConnection(root.GetBox(RootBoxNormal));
+                normalXY.CreateConnection(scale.GetBox(MultiplyBoxA));
+                strength.GetBox(GetParamBoxValue).CreateConnection(scale.GetBox(MultiplyBoxB));
+                normalXY = scale.GetBox(MultiplyBoxResult);
             }
 
+            // Rebuild Z from the scaled channels and feed the material root's Normal input.
+            var derive = context.SpawnNode(MathGroup, DeriveNormalZType, origin + NormalDeriveLocation);
+            if (derive == null)
+            {
+                Debug.LogError($"FlaxAssetManager: failed to spawn the normal-map Derive Normal Z node in material '{material}'.");
+                return false;
+            }
+
+            normalXY.CreateConnection(derive.GetBox(DeriveNormalZBoxXY));
+            derive.GetBox(DeriveNormalZBoxXYZ).CreateConnection(root.GetBox(RootBoxNormal));
             return true;
         }
 
