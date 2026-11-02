@@ -8,6 +8,36 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
 ## [Unreleased]
 
 ### Added
+
+* **An install-state column in the asset list** — the list showed a name, a type/version summary and
+  a trailing chip, and the chip only carried install state for the one source that fills it
+  (`InstallService.ChipText`); a category, tags, or nothing said whether the item was installed in
+  *this* project, which you could only read from the buttons after selecting it. The list is now
+  three columns under a fixed header — **Asset**, **Category** (the chip, now always the manifest
+  category, was the install-state text) and **Status**: `Not installed`, `Installed` (tooltip: the
+  installed version, variant and path) or `Update` when a newer version is published. Cells read
+  `SettingsService.FindInstalled` / `HasUpdate`, the same install record the buttons use, so column,
+  details panel and buttons cannot disagree. Index manifests install nothing, so they read
+  `Index only` with a tooltip pointing at **Add linked source**, and their headers retitle to
+  **Linked manifest** / **Tags** / **Status**. `EKEditorUIKit.ListRow` gained the cell (`SetStatus`)
+  and `Theme` the column x/widths (`NameColumnLeft/Width`, `ChipColumnLeft/Width`,
+  `StatusColumnLeft/Width`); `ListRow.RowLeftInset` is the one place the rows' inset, and so the
+  header's matching x, is written down. The columns are **fixed x from the row's left edge**, every
+  cell and header label sets `Label.ClipText`, and every column tops out at the same y
+  (`TextAlignment.Near`, which is the top edge - Flax has no `Top`). Two live runs shaped this:
+  right-anchored cells landed under the list's 14px vertical scrollbar and cut "Not installed" off,
+  because the rows are laid out in the scroll panel's content area, which is wider than the visible
+  pane; and text over-long for its column drew over the edge, "Ground & Terrain" on top of "Not
+  installed", because a Flax Label defaults to `ClipText=false` (`Label.cs:181-187`,
+  `[DefaultValue(false)]`: `DrawSelf` pushes a clip only when true). The chip column is 150px wide
+  (live categories run to "Ground & Terrain/Sand/Beach") and carries its text as a tooltip. The header
+  labels are children of `SplitView.Panel1`, at the rows' x plus `RowLeftInset`: a `Panel` created for
+  the header drew nothing at all in both runs, its background band included, so nothing nests under it.
+  **Tested:** `EKEditorUIKit` and `FlaxAssetManagerEditor` compile clean against the 1.11 runtime +
+  editor assemblies, 0 warnings; the overlap, the cut-off status cell, the invisible header and
+  `TextAlignment.Top` not existing are all from live runs (three 869-pack Texture Haven screenshots and
+  the compiler). **This rework is not verified in the editor GUI** - check the header, the columns' x
+  at a couple of pane widths, and the states after an install, remove, or an offline refresh.
 * **One install action per pack, and install-state-driven buttons** — the details panel offered
   **Download** (files only) and **Install** (files **+** a generated PBR material) as two buttons for
   a texture pack. They are now one **Install**: for an asset pack with detectable PBR roles the click

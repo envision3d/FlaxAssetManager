@@ -17,9 +17,9 @@ publishing a URL.
 * **Master manifests** — an *index* manifest (`manifestKind: "index"`) is a manifest that links other
   manifests, so one URL is a table of contents its owner keeps updating. Browse it in the window and add
   the entries you want with **Add linked source**; an index never installs anything itself.
-* **Unified browser** — packs from every source in one list: search, type filter, variant
-  dropdown (resolution/quality tiers), install-status badges
-  (Installed / Update available), download counts, license and credit
+* **Unified browser** — packs from every source in one list of three columns (**Asset**, **Category**,
+  **Status**: **Not installed** / **Installed** / **Update**), plus search, type filter, variant
+  dropdown (resolution/quality tiers), download counts, license and credit
   metadata per pack.
 * **Previews** — the detail panel renders the pack's `previewUrl` (WebP is auto-resolved to a
   PNG fallback because the engine's image decoder has no WebP support), and audio files listed in
@@ -108,6 +108,12 @@ becomes the source entry.
 pick a **variant** (e.g. `2K` / `8K` / `256px`) in the detail panel when a pack offers tiers — each
 variant installs into its own `files/<variant>/` subfolder, and the panel shows the exact folder the
 current selection writes to.
+
+**Status column** — every row in the list carries its install state in its own column:
+**Not installed**, **Installed** (current version), or **Update** (a newer version is published),
+with the installed version, variant and install path in the tooltip. It reads the same install record
+as the **Install** / **Update** / **Reinstall** and **Remove** buttons, so the list, the details panel
+and the buttons always say the same thing; installing or removing refreshes the column with the row.
 
 **Install a pack** — select it, press **Install**. Progress shows per file; the install record
 drives the **Update available** badge on later refreshes, and the same record decides the button's

@@ -48,6 +48,11 @@ namespace FlaxAssetManager.UI
         private LabeledCheckBox _installedOnly;
         // Left side
         private SectionHeader _assetCountHeader;
+        // Column-header labels above the scrolling list: Asset / Category / Status (Status says whether
+        // an item is installed here, and its cells come from ListRow.SetStatus). Children of Panel1, at
+        // the rows' fixed column x plus ListRow.RowLeftInset; a Panel created here for the header drew
+        // nothing at all, so the labels sit directly on the pane (see CreateUI).
+        private Label _assetColHeader, _chipColHeader, _statusColHeader;
         private Panel _assetScroll;
         private VerticalPanel _assetListPanel;
         private TextLabel _emptyLabel;
@@ -302,10 +307,51 @@ namespace FlaxAssetManager.UI
                 Offsets = new Margin(8, 8, 6, 0),
                 Height = 20,
             };
+
+            // Column header, drawn under the section header while the list scrolls underneath it. The
+            // labels are children of the panel behind the list - a Panel created here for the header
+            // drew nothing at all, not even its background band, in two live runs - and they use the
+            // rows' fixed column x plus the rows' inset, so each label sits above its column of cells
+            // at any pane width. Built like a row cell: TopLeft + Bounds + ClipText.
+            _assetColHeader = new Label
+            {
+                Parent = _split.Panel1,
+                Font = Theme.CaptionFont,
+                TextColor = Theme.FgDim,
+                HorizontalAlignment = TextAlignment.Near,
+                VerticalAlignment = TextAlignment.Near,
+                AnchorPreset = AnchorPresets.TopLeft,
+                Bounds = new Rectangle(ListRow.RowLeftInset + Theme.NameColumnLeft, 30, 150, 16),
+                ClipText = true,
+            };
+            _chipColHeader = new Label
+            {
+                Parent = _split.Panel1,
+                Font = Theme.CaptionFont,
+                TextColor = Theme.FgDim,
+                HorizontalAlignment = TextAlignment.Near,
+                VerticalAlignment = TextAlignment.Near,
+                AnchorPreset = AnchorPresets.TopLeft,
+                Bounds = new Rectangle(ListRow.RowLeftInset + Theme.ChipColumnLeft, 30, Theme.ChipColumnWidth, 16),
+                ClipText = true,
+            };
+            _statusColHeader = new Label
+            {
+                Parent = _split.Panel1,
+                Font = Theme.CaptionFont,
+                TextColor = Theme.FgDim,
+                HorizontalAlignment = TextAlignment.Near,
+                VerticalAlignment = TextAlignment.Near,
+                AnchorPreset = AnchorPresets.TopLeft,
+                Bounds = new Rectangle(ListRow.RowLeftInset + Theme.StatusColumnLeft, 30, Theme.StatusColumnWidth, 16),
+                ClipText = true,
+                TooltipText = "Whether this item is installed in this project, read from Content/FlaxAssetManager/.installed.json - the same record the Install / Update / Remove buttons use.",
+            };
+
             _assetScroll = new Panel(ScrollBars.Vertical)
             {
                 AnchorPreset = AnchorPresets.StretchAll,
-                Offsets = new Margin(0, 0, 30, 0),
+                Offsets = new Margin(0, 0, 48, 0), // top clears the section header and the column-header labels
                 Parent = _split.Panel1
             };
 
@@ -1104,6 +1150,10 @@ namespace FlaxAssetManager.UI
                 : entries.Where(e => ((e.SourceName ?? "") + " " + (e.SourceId ?? "") + " " + (e.Description ?? "") + " " + string.Join(" ", e.Tags ?? new List<string>())).ToLowerInvariant().Contains(search)).ToList();
 
             _assetCountHeader.Text = $"Linked sources ({filtered.Count})";
+            _assetColHeader.Text = "Linked manifest";
+            _chipColHeader.Text = "Tags";
+            _statusColHeader.Text = "Index";   // these rows can only be an index, never installed
+            _assetColHeader.Visible = _chipColHeader.Visible = _statusColHeader.Visible = filtered.Count > 0;
             _emptyLabel.Visible = filtered.Count == 0;
             if (filtered.Count == 0)
                 _emptyLabel.Text = entries.Count == 0 ? "This index links no manifests." : "No linked source matches the search.";
@@ -1126,6 +1176,9 @@ namespace FlaxAssetManager.UI
                         subtitle += $"  •  {entry.Description}";
                     string chip = entry.Tags != null && entry.Tags.Count > 0 ? string.Join(", ", entry.Tags) : "";
                     row.SetContent(string.IsNullOrWhiteSpace(entry.SourceName) ? entry.SourceId : entry.SourceName, subtitle, chip, Theme.FgDim);
+                    // An index links manifests; nothing is installed from it, so its rows have no
+                    // install state to report - the column says so instead of staying blank.
+                    row.SetStatus("Index only", Theme.FgDim, "An index manifest links other manifests. Select one and use Add linked source to browse and install its packs.");
 
                     row.Clicked += () => SelectIndexEntry(entry, row);
                     row.Focused += () => SelectIndexEntry(entry, row);
@@ -1342,6 +1395,10 @@ namespace FlaxAssetManager.UI
             }).ToList();
 
             _assetCountHeader.Text = $"Assets ({filtered.Count})";
+            _assetColHeader.Text = "Asset";
+            _chipColHeader.Text = "Category";
+            _statusColHeader.Text = "Status";
+            _assetColHeader.Visible = _chipColHeader.Visible = _statusColHeader.Visible = filtered.Count > 0; // no column header over an empty list
             _emptyLabel.Visible = filtered.Count == 0;
             if (filtered.Count == 0)
             {
@@ -1374,23 +1431,10 @@ namespace FlaxAssetManager.UI
                     if (pack.PackType == PackType.ArchivePack)
                         subtitle += "  •  zip archive";
 
-                    string chip; Color? chipColor;
-                    if (installed != null)
-                    {
-                        chip = hasUpdate ? "Update" : "Installed";
-                        chipColor = hasUpdate ? Theme.Progress : Theme.FgDim;
-                    }
-                    else if (!string.IsNullOrEmpty(pack.Category))
-                    {
-                        chip = pack.Category;
-                        chipColor = Theme.FgDim;
-                    }
-                    else
-                    {
-                        chip = "";
-                        chipColor = null;
-                    }
-                    row.SetContent(pack.Name, subtitle, chip, chipColor);
+                    // The chip column shows the manifest's category; the install state lives in the
+                    // Status cell below, so the two never show the same thing twice.
+                    row.SetContent(pack.Name, subtitle, pack.Category ?? string.Empty, Theme.FgDim);
+                    SetRowStatus(row, pack, installed, hasUpdate);
 
                     // Clicking the row selects
                     row.Clicked += () => SelectPack(pack, row);
@@ -1427,7 +1471,6 @@ namespace FlaxAssetManager.UI
             // The new rows change the scroll range; pin the list back to the top.
             ResetAssetListScroll();
 
-
             // Clear details if selection not in filtered
             if (_selectedPack != null && !filtered.Contains(_selectedPack))
             {
@@ -1456,6 +1499,36 @@ namespace FlaxAssetManager.UI
                 HidePreview();
                 StopPreview();
             }
+        }
+
+        /// <summary>
+        /// Writes a pack row's Status cell from its install record - the same record RefreshActionButtons
+        /// reads - so the column, the details panel and the Install/Remove buttons cannot disagree. The
+        /// cell text stays inside the fixed column width; version, variant and install path go in the
+        /// tooltip.
+        /// </summary>
+        private static void SetRowStatus(ListRow row, PackEntry pack, InstalledEntry installed, bool hasUpdate)
+        {
+            if (installed == null)
+            {
+                row.SetStatus("Not installed", Theme.FgDim, pack.Name + " is not installed in this project.");
+                return;
+            }
+
+            var variant = string.IsNullOrEmpty(installed.Variant) ? string.Empty : "  variant: " + installed.Variant;
+            if (hasUpdate)
+            {
+                row.SetStatus(
+                    "Update",
+                    Theme.Progress,
+                    "Installed v" + installed.InstalledVersion + "; v" + pack.Version + " is published - Install updates it." + variant + "\n" + installed.InstallPath);
+                return;
+            }
+
+            row.SetStatus(
+                "Installed",
+                Theme.Fg,
+                "Installed v" + installed.InstalledVersion + "." + variant + "\n" + installed.InstallPath);
         }
 
         /// <summary>

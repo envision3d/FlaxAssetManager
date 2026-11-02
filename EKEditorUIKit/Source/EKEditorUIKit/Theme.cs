@@ -17,6 +17,23 @@ namespace EKEditorUIKit
         public const float KeyColumnWidth = 96f;
         public const float PreviewHeight = 320f;
 
+        // List columns, measured from the row's left edge: the name (title + subtitle), the category
+        // chip, and the install-state cell. ListRow puts its labels at these x, TopLeft-anchored, with
+        // Label.ClipText - Flax Labels default to ClipText=false (Label.cs:181-187, [DefaultValue(false)]:
+        // DrawSelf pushes a clip only when it is true), so text over-long for a column draws over its
+        // edge. Fixed x on purpose, not right-anchored: the rows are laid out in the scroll panel's
+        // content area, which is wider than the visible pane by the vertical scrollbar, so a
+        // right-anchored cell sits under the bar and gets cut (measured in a live list, twice). The
+        // window's column-header labels are children of the panel behind the list and add the rows'
+        // inset (ListRow.RowLeftInset) to these same x, so header and cells share an x. Cost of fixed
+        // x: a pane narrower than StatusColumnLeft + StatusColumnWidth (578) clips the Status column.
+        public const float NameColumnLeft = 12f;
+        public const float NameColumnWidth = 300f; // long pack names + "AssetPack • v1.0.0 • 4 variant(s)"
+        public const float ChipColumnLeft = 326f;  // NameColumnLeft + NameColumnWidth + 14 gap
+        public const float ChipColumnWidth = 150f;  // "Ground & Terrain/Sand/Beach"
+        public const float StatusColumnLeft = 486f; // ChipColumnLeft + ChipColumnWidth + 10 gap
+        public const float StatusColumnWidth = 92f; // Installed / Update / Not installed
+
         // Fonts (FontReference(Font) is null-safe — verified Render2D/FontReference.cs:58)
         public static FontReference TitleFont => new FontReference(Style.Current?.FontLarge);
         public static FontReference BodyFont => new FontReference(Style.Current?.FontMedium);
