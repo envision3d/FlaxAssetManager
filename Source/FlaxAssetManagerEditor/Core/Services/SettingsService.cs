@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using FlaxEngine;
@@ -268,6 +269,28 @@ namespace FlaxAssetManager.Core.Services
         public InstalledEntry FindInstalled(string sourceId, string packId)
         {
             return Installed.Installed.Find(x => x.SourceId == sourceId && x.PackId == packId);
+        }
+        /// <summary>
+        /// The install records of one source, keyed by pack id, in a single pass over the records.
+        /// <see cref="FindInstalled"/> is a linear scan, and the asset list wants the record of every row:
+        /// asking per row made a list rebuild quadratic in how much is installed, and it is asked on every
+        /// search keystroke. The first record for a pack id wins, as <see cref="FindInstalled"/> does.
+        /// </summary>
+        public Dictionary<string, InstalledEntry> BuildInstalledIndex(string sourceId)
+        {
+            var records = Installed?.Installed;
+            var byPack = new Dictionary<string, InstalledEntry>(StringComparer.Ordinal);
+            if (records == null)
+                return byPack;
+            for (int i = 0; i < records.Count; i++)
+            {
+                var e = records[i];
+                if (e == null || e.SourceId != sourceId || string.IsNullOrEmpty(e.PackId))
+                    continue;
+                if (!byPack.ContainsKey(e.PackId))
+                    byPack.Add(e.PackId, e);
+            }
+            return byPack;
         }
 
         public bool HasUpdate(PackEntry pack, string sourceId)

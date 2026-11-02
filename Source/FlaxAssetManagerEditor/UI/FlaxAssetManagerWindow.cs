@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text;
 using System.Net.Http;
 using System.Linq;
 using FlaxEditor;
@@ -95,6 +96,21 @@ namespace FlaxAssetManager.UI
         private FetchedSource _selectedSource;
         private ListRow _selectedRow;
         private readonly List<(PackEntry pack, ListRow row)> _rowItems = new List<(PackEntry, ListRow)>();
+        // Row widgets live between rebuilds. A rebuild used to dispose every row and build a new one per
+        // item: a row is a container (a ListRow is a Label, carrying four labels of its own), so a
+        // 1,000-item list meant ~5,000 controls created, laid out and destroyed per keystroke, all of it
+        // garbage. The pool keeps them; a rebuild re-labels the rows it needs and hides the rest. Pool
+        // slots are the panel's children in order, which is what keeps the visible rows in list order.
+        private readonly List<AssetManagerListRow> _rowPool = new List<AssetManagerListRow>();
+        // Per-pack search haystack and file-type mask: facts of a fetched manifest, so each pack pays for
+        // them once, not once per keystroke. Dropped when the pack list is replaced.
+        private readonly Dictionary<PackEntry, string> _packHay = new Dictionary<PackEntry, string>();
+        private readonly Dictionary<PackEntry, uint> _packTypes = new Dictionary<PackEntry, uint>();
+        // Typing in the search box filters the list; rebuilding on every keystroke ran the whole rebuild -
+        // filter, rows and layout - once per character. The rebuild runs this far behind the last keystroke.
+        private const double SearchDebounceSeconds = 0.12;
+        private DateTime _lastSearchTypedUtc;
+        private bool _searchRebuildPending;
         private CancellationTokenSource _refreshCts;
         private CancellationTokenSource _installCts;
         private CancellationTokenSource _installMaterialCts;
@@ -259,7 +275,7 @@ namespace FlaxAssetManager.UI
                 AnchorPreset = AnchorPresets.TopLeft,
                 Bounds = new Rectangle(8, 35, 282, 22),
             };
-            _searchBox.TextChanged += () => RebuildAssetList();
+            _searchBox.TextChanged += OnSearchTextChanged;
 
             var typeLabel = new TextLabel("Type:", TextLabelStyle.Body, dim: true)
             {
@@ -959,6 +975,12 @@ namespace FlaxAssetManager.UI
             base.OnUpdate();
             // Apply reports queued by installer worker threads on the main thread.
             DrainMainThreadCalls();
+            // Run a deferred search rebuild once the typing has settled (see OnSearchTextChanged).
+            if (_searchRebuildPending && (DateTime.UtcNow - _lastSearchTypedUtc).TotalSeconds >= SearchDebounceSeconds)
+            {
+                _searchRebuildPending = false;
+                RebuildAssetList();
+            }
             if (System.Threading.Interlocked.Exchange(ref _fetchedPending, 0) == 1)
                 OnFetchedMainThread();
             if (System.Threading.Interlocked.Exchange(ref _refreshCleanupPending, 0) == 1)
@@ -1066,6 +1088,7 @@ namespace FlaxAssetManager.UI
                 _sourceCombo.SelectedIndex = 0;
                 _selectedSource = null;
                 _currentPacks = new List<PackEntry>();
+                InvalidatePackCaches();
                 _assetCountHeader.Text = "Assets (0)";
                 RebuildAssetList();
                 if (_statusBar != null)
@@ -1127,12 +1150,25 @@ namespace FlaxAssetManager.UI
 
         private void UpdatePacksForSelectedSource()
         {
+            // The search caches key on the pack objects of a fetched manifest, so the new pack list
+            // makes the old entries unreachable; drop them here, where the list is swapped.
+            InvalidatePackCaches();
             if (_selectedSource?.Manifest?.Assets != null)
                 // An index manifest has no assets; keep the pack-side code paths on an empty list.
                 _currentPacks = _selectedSource.Manifest.Assets ?? new List<PackEntry>();
             else
                 _currentPacks = new List<PackEntry>();
             RebuildAssetList();
+        }
+        /// <summary>
+        /// The search box filters the list, but not on the keystroke: the rebuild is deferred until typing
+        /// stops and <see cref="OnUpdate"/> runs it. A rebuild is bounded by the rows it shows, so nine of
+        /// them for a nine-character query is nine times the work of one, all of it on the keystroke.
+        /// </summary>
+        private void OnSearchTextChanged()
+        {
+            _lastSearchTypedUtc = DateTime.UtcNow;
+            _searchRebuildPending = true;
         }
 
         /// <summary>
@@ -1144,51 +1180,65 @@ namespace FlaxAssetManager.UI
         {
             _listIsIndex = true;
             var entries = _selectedSource?.Manifest?.Entries ?? new List<IndexEntry>();
-            var search = _searchBox.Text?.Trim().ToLowerInvariant() ?? "";
-            var filtered = string.IsNullOrEmpty(search)
-                ? entries
-                : entries.Where(e => ((e.SourceName ?? "") + " " + (e.SourceId ?? "") + " " + (e.Description ?? "") + " " + string.Join(" ", e.Tags ?? new List<string>())).ToLowerInvariant().Contains(search)).ToList();
+            var search = _searchBox.Text?.Trim() ?? string.Empty;
 
-            _assetCountHeader.Text = $"Linked sources ({filtered.Count})";
-            _assetColHeader.Text = "Linked manifest";
-            _chipColHeader.Text = "Tags";
-            _statusColHeader.Text = "Index";   // these rows can only be an index, never installed
-            _assetColHeader.Visible = _chipColHeader.Visible = _statusColHeader.Visible = filtered.Count > 0;
-            _emptyLabel.Visible = filtered.Count == 0;
-            if (filtered.Count == 0)
-                _emptyLabel.Text = entries.Count == 0 ? "This index links no manifests." : "No linked source matches the search.";
-
-            for (int i = 0; i < filtered.Count; i++)
+            var filtered = new List<IndexEntry>();
+            for (int i = 0; i < entries.Count; i++)
             {
-                var entry = filtered[i];
-                try
+                var e = entries[i];
+                if (search.Length != 0)
                 {
-                    var row = new AssetManagerListRow
-                    {
-                        Parent = _assetListPanel,
-                        AnchorPreset = AnchorPresets.HorizontalStretchTop,
-                        Offsets = new Margin(4, 0, 4, 2),
-                    };
-                    row.Height = Theme.RowHeight; // Offsets setter squashed height (top-anchored); re-assert
-                    var host = SafeHost(entry.Url);
-                    string subtitle = $"manifest  •  {host}";
-                    if (!string.IsNullOrWhiteSpace(entry.Description))
-                        subtitle += $"  •  {entry.Description}";
-                    string chip = entry.Tags != null && entry.Tags.Count > 0 ? string.Join(", ", entry.Tags) : "";
-                    row.SetContent(string.IsNullOrWhiteSpace(entry.SourceName) ? entry.SourceId : entry.SourceName, subtitle, chip, Theme.FgDim);
-                    // An index links manifests; nothing is installed from it, so its rows have no
-                    // install state to report - the column says so instead of staying blank.
-                    row.SetStatus("Index only", Theme.FgDim, "An index manifest links other manifests. Select one and use Add linked source to browse and install its packs.");
+                    var hay = string.Concat(e.SourceName ?? string.Empty, " ", e.SourceId ?? string.Empty, " ", e.Description ?? string.Empty, " ", string.Join(" ", e.Tags ?? new List<string>()));
+                    if (hay.IndexOf(search, StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+                }
+                filtered.Add(e);
+            }
 
-                    row.Clicked += () => SelectIndexEntry(entry, row);
-                    row.Focused += () => SelectIndexEntry(entry, row);
-                    row.OnArrow = OnRowArrow;
-                    _indexRowItems.Add((entry, row));
-                }
-                catch (Exception ex)
+            BeginListLayoutBatch();
+            try
+            {
+                _assetCountHeader.Text = $"Linked sources ({filtered.Count})";
+                _assetColHeader.Text = "Linked manifest";
+                _chipColHeader.Text = "Tags";
+                _statusColHeader.Text = "Index";   // these rows can only be an index, never installed
+                _assetColHeader.Visible = _chipColHeader.Visible = _statusColHeader.Visible = filtered.Count > 0;
+                _emptyLabel.Visible = filtered.Count == 0;
+                if (filtered.Count == 0)
+                    _emptyLabel.Text = entries.Count == 0 ? "This index links no manifests." : "No linked source matches the search.";
+
+                for (int i = 0; i < filtered.Count; i++)
                 {
-                    Debug.LogError($"FlaxAssetManager: Failed to create row for linked source {entry.SourceId}: {ex.Message}");
+                    var entry = filtered[i];
+                    try
+                    {
+                        var row = AcquireRow(i);
+                        row.Tag = entry;
+                        row.Selected = false;
+
+                        var host = SafeHost(entry.Url);
+                        string subtitle = $"manifest  •  {host}";
+                        if (!string.IsNullOrWhiteSpace(entry.Description))
+                            subtitle += $"  •  {entry.Description}";
+                        string chip = entry.Tags != null && entry.Tags.Count > 0 ? string.Join(", ", entry.Tags) : "";
+                        row.SetContent(string.IsNullOrWhiteSpace(entry.SourceName) ? entry.SourceId : entry.SourceName, subtitle, chip, Theme.FgDim);
+                        // An index links manifests; nothing is installed from it, so its rows have no
+                        // install state to report - the column says so instead of staying blank.
+                        row.SetStatus("Index only", Theme.FgDim, "An index manifest links other manifests. Select one and use Add linked source to browse and install its packs.");
+                        _indexRowItems.Add((entry, row));
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"FlaxAssetManager: Failed to create row for linked source {entry.SourceId}: {ex.Message}");
+                        HideRow(i);
+                    }
                 }
+
+                TrimRows(filtered.Count);
+            }
+            finally
+            {
+                EndListLayoutBatch();
             }
         }
 
@@ -1349,7 +1399,11 @@ namespace FlaxAssetManager.UI
 
         private void RebuildAssetList()
         {
-            _assetListPanel.DisposeChildren();
+            if (IsDisposing || _assetListPanel == null)
+                return;
+            // A rebuild now covers whatever the search box says, so a pending deferred one is spent.
+            _searchRebuildPending = false;
+
             _selectedRow = null;
             _rowItems.Clear();
             _indexRowItems.Clear();
@@ -1363,93 +1417,118 @@ namespace FlaxAssetManager.UI
                 return;
             }
 
-            var filter = _typeFilter.SelectedItem?.ToString() ?? "All";
-            var search = _searchBox.Text?.Trim().ToLowerInvariant() ?? "";
+            var search = _searchBox.Text?.Trim() ?? string.Empty;
             var installedOnly = _installedOnly?.Checked == true;
             var sourceId = _selectedSource?.Manifest?.SourceId ?? "unknown";
+            var filter = _typeFilter.SelectedItem?.ToString() ?? "All";
+            bool allTypes = filter == "All";
+            bool pluginFilter = filter == "PluginProject";
+            bool archiveFilter = filter == "ArchivePack";
+            bool fileTypesFilter = Enum.TryParse(filter, out FileAssetType wantType) && !allTypes && !pluginFilter && !archiveFilter;
 
-            var filtered = _currentPacks.Where(p =>
+            // The install record of every row, from one pass over the records. FindInstalled is a linear
+            // scan, so asking it per row - twice - made a rebuild quadratic in how much is installed.
+            var installedByPack = _settings.BuildInstalledIndex(sourceId);
+
+            var filtered = new List<PackEntry>();
+            for (int i = 0; i < _currentPacks.Count; i++)
             {
+                var p = _currentPacks[i];
+
                 // Installed only: keep just the packs already installed from this source
-                if (installedOnly && _settings.FindInstalled(sourceId, p.Id) == null)
-                    return false;
-                // Search: match name/id/desc/category/tags OR any file path/type
-                if (!string.IsNullOrEmpty(search))
-                {
-                    var hay = (p.Name + " " + p.Id + " " + (p.Description ?? "") + " " + (p.Category ?? "") + " " + string.Join(" ", p.Tags ?? new List<string>())).ToLowerInvariant();
-                    bool hayMatch = hay.Contains(search);
-                    bool fileMatch = (p.Files != null && p.Files.Any(f => f.Path.ToLowerInvariant().Contains(search) || f.Type.ToString().ToLowerInvariant().Contains(search)))
-                        || (p.Variants != null && p.Variants.Any(v => v.Files != null && v.Files.Any(f => f.Path.ToLowerInvariant().Contains(search) || f.Type.ToString().ToLowerInvariant().Contains(search))));
-                    if (!hayMatch && !fileMatch)
-                        return false;
-                }
-                if (filter == "All") return true;
-                if (filter == "PluginProject") return p.PackType == PackType.PluginProject;
-                if (filter == "ArchivePack") return p.PackType == PackType.ArchivePack;
-                if (Enum.TryParse<FileAssetType>(filter, out var ft))
-                {
-                    if (p.PackType != PackType.AssetPack) return false;
-                    return (p.Files != null && p.Files.Any(f => f.Type == ft)) || (p.Variants != null && p.Variants.Any(v => v.Files != null && v.Files.Any(f => f.Type == ft)));
-                }
-                return true;
-            }).ToList();
+                if (installedOnly && !installedByPack.ContainsKey(p.Id))
+                    continue;
 
-            _assetCountHeader.Text = $"Assets ({filtered.Count})";
-            _assetColHeader.Text = "Asset";
-            _chipColHeader.Text = "Category";
-            _statusColHeader.Text = "Status";
-            _assetColHeader.Visible = _chipColHeader.Visible = _statusColHeader.Visible = filtered.Count > 0; // no column header over an empty list
-            _emptyLabel.Visible = filtered.Count == 0;
-            if (filtered.Count == 0)
-            {
-                if (_currentPacks.Count == 0)
-                    _emptyLabel.Text = _selectedSource == null ? "No source selected." : _selectedSource.Success ? "This source has no assets." : $"Failed to fetch:\n{_selectedSource.Error}";
-                else
-                    _emptyLabel.Text = installedOnly ? "No installed assets match filter/search." : "No assets match filter/search.";
+                // Search: match name/id/desc/category/tags OR any file path/type. Per pack that is one
+                // case-insensitive IndexOf over a haystack built once for that pack (PackHaystack);
+                // typing used to concatenate and lower-case a string per pack, plus two per file, and
+                // scan every file of every pack even when the name had already matched.
+                if (search.Length != 0 && PackHaystack(p).IndexOf(search, StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                if (allTypes)
+                {
+                    // every pack passes the type filter
+                }
+                else if (pluginFilter)
+                {
+                    if (p.PackType != PackType.PluginProject)
+                        continue;
+                }
+                else if (archiveFilter)
+                {
+                    if (p.PackType != PackType.ArchivePack)
+                        continue;
+                }
+                else if (fileTypesFilter && (p.PackType != PackType.AssetPack || (PackFileTypes(p) & (1u << (int)wantType)) == 0))
+                {
+                    // The types a pack offers are a fact of its manifest, so the filter is a bit test
+                    // against a per-pack mask, not a scan of its files and variants.
+                    continue;
+                }
+
+                filtered.Add(p);
             }
 
-            for (int i = 0; i < filtered.Count; i++)
+            BeginListLayoutBatch();
+            try
             {
-                var pack = filtered[i];
-                try
+                _assetCountHeader.Text = $"Assets ({filtered.Count})";
+                _assetColHeader.Text = "Asset";
+                _chipColHeader.Text = "Category";
+                _statusColHeader.Text = "Status";
+                _assetColHeader.Visible = _chipColHeader.Visible = _statusColHeader.Visible = filtered.Count > 0; // no column header over an empty list
+                _emptyLabel.Visible = filtered.Count == 0;
+                if (filtered.Count == 0)
                 {
-                    var installed = _settings.FindInstalled(sourceId, pack.Id);
-                    var hasUpdate = _settings.HasUpdate(pack, sourceId);
+                    if (_currentPacks.Count == 0)
+                        _emptyLabel.Text = _selectedSource == null ? "No source selected." : _selectedSource.Success ? "This source has no assets." : $"Failed to fetch:\n{_selectedSource.Error}";
+                    else
+                        _emptyLabel.Text = installedOnly ? "No installed assets match filter/search." : "No assets match filter/search.";
+                }
 
-                    var row = new AssetManagerListRow
+                for (int i = 0; i < filtered.Count; i++)
+                {
+                    var pack = filtered[i];
+                    try
                     {
-                        Parent = _assetListPanel,
-                        AnchorPreset = AnchorPresets.HorizontalStretchTop,
-                        Offsets = new Margin(4, 0, 4, 2),
-                    };
-                    row.Height = Theme.RowHeight; // Offsets setter squashed height (top-anchored); re-assert
-                    string subtitle = $"{pack.PackType}  •  v{pack.Version}";
-                    if (pack.PackType == PackType.AssetPack && pack.Files != null)
-                        subtitle += $"  •  {pack.Files.Count} file(s)";
-                    if (pack.PackType == PackType.AssetPack && pack.Variants != null && pack.Variants.Count > 0)
-                        subtitle += $"  •  {pack.Variants.Count} variant(s)";
-                    if (pack.PackType == PackType.ArchivePack)
-                        subtitle += "  •  zip archive";
+                        var row = AcquireRow(i);
+                        row.Tag = pack;
+                        row.Selected = false;
 
-                    // The chip column shows the manifest's category; the install state lives in the
-                    // Status cell below, so the two never show the same thing twice.
-                    row.SetContent(pack.Name, subtitle, pack.Category ?? string.Empty, Theme.FgDim);
-                    SetRowStatus(row, pack, installed, hasUpdate);
+                        installedByPack.TryGetValue(pack.Id, out var installed);
+                        // The rule of SettingsService.HasUpdate, read off the record already in hand.
+                        bool hasUpdate = installed != null && !string.Equals(installed.InstalledVersion, pack.Version, StringComparison.Ordinal);
 
-                    // Clicking the row selects
-                    row.Clicked += () => SelectPack(pack, row);
+                        string subtitle = $"{pack.PackType}  •  v{pack.Version}";
+                        if (pack.PackType == PackType.AssetPack && pack.Files != null)
+                            subtitle += $"  •  {pack.Files.Count} file(s)";
+                        if (pack.PackType == PackType.AssetPack && pack.Variants != null && pack.Variants.Count > 0)
+                            subtitle += $"  •  {pack.Variants.Count} variant(s)";
+                        if (pack.PackType == PackType.ArchivePack)
+                            subtitle += "  •  zip archive";
 
-                    // Focusing the row selects it, so Tab/Shift+Tab and arrow keys update the
-                    // details panel just like a click (the row swallows arrows otherwise).
-                    row.Focused += () => SelectPack(pack, row);
-                    // ArrowUp/Down move focus to the neighbor; the Focused handler above selects.
-                    row.OnArrow = OnRowArrow;
-                    _rowItems.Add((pack, row));
+                        // The chip column shows the manifest's category; the install state lives in the
+                        // Status cell below, so the two never show the same thing twice.
+                        row.SetContent(pack.Name, subtitle, pack.Category ?? string.Empty, Theme.FgDim);
+                        SetRowStatus(row, pack, installed, hasUpdate);
+                        _rowItems.Add((pack, row));
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"FlaxAssetManager: Failed to create row for {pack.Id}: {ex.Message}\n{ex.StackTrace}");
+                        // The slot has no content of its own; drop it so it cannot show the next item's
+                        // data shifted up one row.
+                        HideRow(i);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"FlaxAssetManager: Failed to create row for {pack.Id}: {ex.Message}\n{ex.StackTrace}");
-                }
+
+                // Rows the filtered list does not need stay in the pool, out of sight.
+                TrimRows(filtered.Count);
+            }
+            finally
+            {
+                EndListLayoutBatch();
             }
 
             // Reapply selection highlight on the rebuilt rows
@@ -1462,11 +1541,6 @@ namespace FlaxAssetManager.UI
                     _selectedRow = item.row;
                 }
             }
-
-            _assetListPanel.UnlockChildrenRecursive();
-            _assetListPanel.PerformLayout();
-            _assetScroll.UnlockChildrenRecursive();
-            _assetScroll.PerformLayout();
 
             // The new rows change the scroll range; pin the list back to the top.
             ResetAssetListScroll();
@@ -1499,6 +1573,187 @@ namespace FlaxAssetManager.UI
                 HidePreview();
                 StopPreview();
             }
+        }
+
+        /// <summary>
+        /// The row showing list slot <paramref name="slot"/>: taken from the pool, created on first use.
+        /// Pool slots are the panel's children in order, so the visible rows stay in list order no matter
+        /// which item lands in a slot; a reused row reads its item from <see cref="Control.Tag"/>.
+        /// </summary>
+        private AssetManagerListRow AcquireRow(int slot)
+        {
+            if (slot >= _rowPool.Count)
+            {
+                var created = new AssetManagerListRow
+                {
+                    Parent = _assetListPanel,
+                    AnchorPreset = AnchorPresets.HorizontalStretchTop,
+                    Offsets = new Margin(4, 0, 4, 2),
+                };
+                created.Height = Theme.RowHeight; // Offsets setter squashed height (top-anchored); re-assert
+                // Bound once, for the life of the row: the handlers read the row's current Tag, so reuse
+                // re-points them at new data. Per-item handlers would pile up on a row that outlives the
+                // item it was built for, and every row would fire the selection of every item it ever showed.
+                created.Clicked += () => OnRowActivate(created);
+                created.Focused += () => OnRowActivate(created);
+                created.OnArrow = OnRowArrow;
+                _rowPool.Add(created);
+            }
+
+            var row = _rowPool[slot];
+            if (!row.Visible)
+                row.Visible = true;
+            return row;
+        }
+
+        /// <summary>
+        /// Hides the pooled rows past the end of the filtered list; they keep their widgets for the next
+        /// rebuild instead of being disposed and rebuilt with it.
+        /// </summary>
+        private void TrimRows(int used)
+        {
+            for (int i = used; i < _rowPool.Count; i++)
+                HideRow(i);
+        }
+
+        /// <summary>Takes a pool slot out of the list (content failed to build, or the filter excluded it).</summary>
+        private void HideRow(int slot)
+        {
+            if (slot >= _rowPool.Count)
+                return;
+            var row = _rowPool[slot];
+            row.Tag = null;
+            row.Selected = false;
+            if (row.Visible)
+                row.Visible = false;
+        }
+
+        /// <summary>
+        /// Clicked/focused on a row: selects what that row is showing right now. A row is reused across
+        /// rebuilds, so the item comes from its Tag - a pack row and a linked-manifest row share the pool.
+        /// </summary>
+        private void OnRowActivate(Control row)
+        {
+            switch (row?.Tag)
+            {
+            case PackEntry pack:
+                SelectPack(pack, (AssetManagerListRow)row);
+                break;
+            case IndexEntry entry:
+                SelectIndexEntry(entry, (AssetManagerListRow)row);
+                break;
+            }
+        }
+
+        /// <summary>
+        /// Suppresses layout for the asset list while it is being refilled.
+        ///
+        /// Flax lays a container out whenever a child is added, removed, shown, hidden or resized -
+        /// ContainerControl.OnChildrenChanged, Control.Visible and Control.OnSizeChanged all call
+        /// PerformLayout - and one pass of a ContainerControl locks the subtree, re-bounds every child,
+        /// lays out every child, and lets the panel's own AutoSize resize it, which notifies every child
+        /// again. Doing that once per row, for N rows, is quadratic in N; a 1,000-row list is a few tens
+        /// of milliseconds per keystroke and a 2,500-row list is hundreds. Locking the subtree turns all
+        /// of those calls into no-ops, so the list is laid out once, by EndListLayoutBatch.
+        /// </summary>
+        private void BeginListLayoutBatch()
+        {
+            _assetScroll.LockChildrenRecursive();
+        }
+
+        /// <summary>Releases the batch and lays the list out once (see <see cref="BeginListLayoutBatch"/>).</summary>
+        private void EndListLayoutBatch()
+        {
+            _assetScroll.UnlockChildrenRecursive();
+            _assetScroll.PerformLayout();
+        }
+
+        /// <summary>
+        /// Everything a pack is searchable by - name, id, description, category, tags, and every file
+        /// path and type including the variants' - as one string, built once per pack and dropped when
+        /// the manifest is replaced (InvalidatePackCaches). Search matching is case-insensitive over
+        /// this, so typing allocates nothing.
+        /// </summary>
+        private string PackHaystack(PackEntry pack)
+        {
+            if (_packHay.TryGetValue(pack, out var hay))
+                return hay;
+            hay = BuildHaystack(pack);
+            _packHay[pack] = hay;
+            return hay;
+        }
+
+        private static string BuildHaystack(PackEntry pack)
+        {
+            var sb = new StringBuilder();
+            sb.Append(pack.Name).Append(' ');
+            sb.Append(pack.Id).Append(' ');
+            sb.Append(pack.Description ?? string.Empty).Append(' ');
+            sb.Append(pack.Category ?? string.Empty).Append(' ');
+            if (pack.Tags != null)
+            {
+                for (int i = 0; i < pack.Tags.Count; i++)
+                    sb.Append(pack.Tags[i]).Append(' ');
+            }
+            AppendFiles(sb, pack.Files);
+            if (pack.Variants != null)
+            {
+                for (int i = 0; i < pack.Variants.Count; i++)
+                    AppendFiles(sb, pack.Variants[i].Files);
+            }
+            return sb.ToString();
+        }
+
+        private static void AppendFiles(StringBuilder sb, List<FileEntry> files)
+        {
+            if (files == null)
+                return;
+            for (int i = 0; i < files.Count; i++)
+                sb.Append(files[i].Path).Append(' ').Append(files[i].Type).Append(' ');
+        }
+
+        /// <summary>
+        /// The file types a pack offers, as a bitmask (FileAssetType tops out at 9), built once per pack
+        /// like the search haystack. Keeps the Type filter a bit test per row instead of a scan of the
+        /// pack's files and variants.
+        /// </summary>
+        private uint PackFileTypes(PackEntry pack)
+        {
+            if (_packTypes.TryGetValue(pack, out var mask))
+                return mask;
+            mask = BuildTypeMask(pack);
+            _packTypes[pack] = mask;
+            return mask;
+        }
+
+        private static uint BuildTypeMask(PackEntry pack)
+        {
+            uint mask = 0u;
+            AddFileTypes(ref mask, pack.Files);
+            if (pack.Variants != null)
+            {
+                for (int i = 0; i < pack.Variants.Count; i++)
+                    AddFileTypes(ref mask, pack.Variants[i].Files);
+            }
+            return mask;
+        }
+
+        private static void AddFileTypes(ref uint mask, List<FileEntry> files)
+        {
+            if (files == null)
+                return;
+            for (int i = 0; i < files.Count; i++)
+                mask |= 1u << (int)files[i].Type;
+        }
+
+        /// <summary>
+        /// Drops the per-pack search caches. They key on the pack objects of a fetched manifest, so a
+        /// refetch - which parses new ones - has to drop the old entries; the pack list is what changed.
+        /// </summary>
+        private void InvalidatePackCaches()
+        {
+            _packHay.Clear();
+            _packTypes.Clear();
         }
 
         /// <summary>

@@ -146,6 +146,30 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
   node's UVs input with the shared UV transform, so a normal map is tiled and offset like every texture.
 
 ### Fixed
+* **The asset search box rebuilt the whole list on every keystroke, in a quadratic layout pass** — typing
+  in *Search assets...* on a long source (1,046 packs / 6,564 files, 869 packs / 14,608 files) stalled the
+  editor, and every other list change cost the same. `RebuildAssetList` disposed every row and built a new
+  one per item, and a row is a *container* (`ListRow` is a `Label`, which is a `ContainerControl`, carrying
+  four labels) — so one keystroke created, laid out and destroyed ~5,200 controls. Worse, the list panel
+  starts layout-**locked** (the `ContainerControl` ctor, which is why the first build is quick) and the
+  rebuild *unlocks* it, so from the second rebuild on every child added, shown, hidden or resized makes Flax
+  re-layout the whole list: `ContainerControl.PerformLayout` locks the subtree, re-bounds every child, lays
+  out every child, and the `VerticalPanel`'s `AutoSize` resize then notifies every child again. Once per row,
+  for N rows, is quadratic. Now the refill runs with the list's subtree locked and the layout happens once at
+  the end (`BeginListLayoutBatch`/`EndListLayoutBatch`); rows are **pooled** and re-labelled — a pooled row is
+  bound once and reads its item from `Control.Tag`, so reuse re-points it at new data instead of stacking
+  per-item handlers — and typing is debounced 120 ms through the window's `OnUpdate`, so a nine-character
+  query filters once. The filter itself was the other half: `fileMatch` was computed even when the pack name
+  had already matched, so every keystroke scanned every file of every pack and allocated two lower-cased
+  strings per file, and the install record was a linear `FindInstalled` **twice per row**. The searchable
+  text of a pack is now one cached haystack matched with `IndexOf(OrdinalIgnoreCase)`, its file types a
+  cached bitmask, and its install record comes from one pass (`SettingsService.BuildInstalledIndex`).
+  **Measured:** the layout cost is modelled from the engine's decompiled layout code (`ContainerControl`,
+  `VerticalPanel`, `Panel` of the 1.13 assembly) — 1,046 rows: **54 ms → 0.4 ms** per rebuild, 2,500 rows:
+  **334 ms → ~1 ms**, and the shape stops growing; the filter on the real manifests: 0.75-1.0 ms and
+  1.7-2.6 MiB of garbage per keystroke → **0.03-0.5 ms and ~0 B**; 1,046 install records: 6.3 ms per rebuild
+  → one pass. Compiles clean against the 1.13 editor assemblies, 0 warnings; the shape of the fix is
+  confirmed in a live editor on a 1,046-pack source (D18).
 * **A generated material renders as soon as it is created** — installing a texture pack built the material
   and assigned it to the pack's models, but it rendered **pure black** until the user reloaded it by hand in
   the Content browser. `Material.SaveSurface` writes the asset; what the renderer binds is the *loaded*

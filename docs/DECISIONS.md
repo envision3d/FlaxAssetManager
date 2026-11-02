@@ -648,3 +648,68 @@ the plugin, and the stock material editor already reloads, so the engine is not 
 one load per material inside the install (visible as install duration, not as a stall in the window); a
 material the user edits in the material window afterwards is the engine's business, and this setter is not
 involved there.
+
+## D18 — Typing in the asset search fills the list; it does not rebuild it · **resolved**
+
+The search box was slow on long sources — 1,046 packs / 6,564 files, 869 packs / 14,608 files, 521 packs /
+8,169 variant files — to the point of stalling the editor for a keystroke, and every other list change paid
+the same. Nothing about the search is expensive on data of that size; the cost was in how the list was
+re-made, and the shape of the cost was **quadratic in the number of rows**.
+
+`RebuildAssetList` disposed every row and built a new one per item. A row is not a leaf: `ListRow` is a
+`Label`, a `Label` is a `ContainerControl`, and each row carries four child labels — so a 1,046-item list is
+~5,200 controls created, laid out and destroyed **per keystroke**. And the panel that holds them starts
+layout-locked (`ContainerControl` ctor sets `_isLayoutLocked = true`, which is exactly why the *first* build
+of a session is quick) while the end of every rebuild calls `UnlockChildrenRecursive`, so from the second
+rebuild on the panel is unlocked and Flax's own layout rules fire per child: `AddChildInternal` →
+`OnChildrenChanged` → `PerformLayout` (`ContainerControl.cs:503-504`, `474-479`), `Control.Visible` →
+`_parent?.PerformLayout()` (`Control.cs:861`), `OnSizeChanged` → every child's `OnParentResized` and then
+`PerformLayout` (`ContainerControl.cs:1322-1333`). One `ContainerControl.PerformLayout` locks the subtree,
+re-bounds every child, lays out every child, runs `VerticalPanel.PerformLayoutAfterChildren` (which sets
+every child's bounds, and its `AutoSize` resizes the panel, which notifies every child again) and unlocks.
+Doing that once per row is the quadratic: at 1,046 rows, 2.76 M `UpdateBounds` calls and 11 M lock/unlock
+subtree visits **per rebuild**.
+
+**Measured.** A model of the decompiled 1.13 layout code (`ContainerControl`, `VerticalPanel`, `Panel`, with
+the same control flow and five controls per row) gives, per rebuild of an unlocked panel — 100 rows 3.7 ms /
+27 k bounds updates, 700 rows 23 ms / 1.24 M, 1,046 rows 54 ms / 2.76 M, 2,500 rows 334 ms / 15.7 M — against
+a locked panel: 0.18 ms, 0.24 ms, 0.38 ms, 0.97 ms. The model omits the real `Control` fields, the engine's
+events, `Panel`'s scrollbar work, the real `Label`/font path and the 5 N allocations, so the editor cost is a
+multiple of those numbers; the **shape** is the finding — a locked fill is linear, an unlocked one is
+quadratic. `Panel.PerformLayout` also loops a second full pass while a child marks itself dirty
+(`Panel.cs:575-592`), and `ResetAssetListScroll` forces a third; those are two passes per rebuild, not per
+row, so they stay.
+
+**Resolved: a rebuild is a fill.** The refill happens with the list's subtree layout locked
+(`BeginListLayoutBatch` → `_assetScroll.LockChildrenRecursive()`) and is laid out **once** at the end
+(`EndListLayoutBatch`), which is the same guard the engine's own `DisposeChildren` uses around its loop.
+Rows are **pooled** between rebuilds: slot *i* is child *i* of the panel, which is what keeps the visible
+rows in list order; a pooled row is bound once (`Clicked`/`Focused`/`OnArrow` → `OnRowActivate`) and reads
+the item it currently shows from `Control.Tag`, so reuse re-points it at new data — per-item handlers would
+pile up on a row that outlives the item it was built for, and each row would fire the selection of every
+item it ever showed. Rows the filter does not need are hidden (`TrimRows`); the engine skips invisible
+children in layout, drawing and hit-testing, and hiding a focused row defocuses it through the setter's
+`ClearState`, which is what disposing it used to do. Typing is debounced (120 ms, flushed from `OnUpdate` —
+the window already runs `OnUpdate` for its previews, so no timer, per D's "manual refresh only" spirit).
+The filter is data-side now: a pack's searchable text is one cached haystack (`PackHaystack`) matched with
+`IndexOf(OrdinalIgnoreCase)` and an early-out on a name hit, its file types a cached bitmask
+(`PackFileTypes`), and its install record comes from one pass over the records
+(`SettingsService.BuildInstalledIndex`) instead of a linear `FindInstalled` twice per row. The caches key on
+the pack objects of a fetched manifest and are dropped where the pack list is swapped. **Measured:** filter on
+the real manifests 0.75-1.0 ms and 1.7-2.6 MiB of garbage per keystroke → 0.03-0.5 ms and ~0 B; 1,046 install
+records 6.3 ms per rebuild → one pass; layout as above.
+
+Rejected: **debounce alone** (a ten-character query is ten rebuilds; it shortens the pain and leaves the
+quadratic); **virtualizing a window of rows** (right for a list of tens of thousands; the row pool is the
+same mechanism minus the offset bookkeeping, and no source here is that big — see Remaining); **pagination**
+(the list is a browse-and-filter surface; a page break in the middle of a filtered result is a worse
+interface than the scroll bar it saves); **an engine-side layout fix** (D1's guardrail — plugin policy stays
+in the plugin, and locking the subtree during a bulk fill is the engine's own idiom, not a workaround);
+**keeping the panel unlocked and adding rows in one batch** (a batch of `AddChild` calls on an unlocked panel
+is the quadratic — the lock is the point).
+
+**Remaining:** the pool grows to the largest list shown in a session (~5,200 controls for 1,046 rows) and
+stays live, so the per-frame `Update` walk is linear in it — tens of microseconds, not the bug; if a source
+grows to tens of thousands of packs the next step is a row window over the same pool (show rows
+`[scroll/rowHeight, +visible]`, which the engine's drawing cull already assumes), and the search text could
+be matched off the main thread, since the filter is pure data.
