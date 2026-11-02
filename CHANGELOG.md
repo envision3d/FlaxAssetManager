@@ -198,6 +198,15 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
   file is never taken for the plugin's, and the containment rule of D14 is unchanged: the result must sit
   inside `Globals.ProjectFolder`, and the confirm dialog still names the exact folder before anything is
   written (D16).
+* **The source picker counted an index's linked sources** — every `ComboBox` entry is the source's display
+  name plus a ` (N)` count of what selecting it lists, and `OnFetchedMainThread` read `Manifest.Assets` for
+  every source alike. An index manifest has no `assets[]` (D13), so a master index read **`Master index
+  (local) (0)`** while the list under it read **`Linked sources (15)`** — the count said the source was
+  empty in exactly the case where it is a table of contents. The count now branches on `Manifest.IsIndex`
+  and reads `entries[]` for an index, the list `RebuildIndexList` fills — the same branch `AssetSourceManager`
+  already uses when it logs a fetch — so picker and list header agree; a pack manifest still counts
+  `assets[]`, and a failed source still reads `(error)`. **Tested:** compiles clean against the 1.13 editor
+  assemblies, 0 warnings; the `(0)` over a 15-entry index is from a live run (the reported screenshot).
 
 ## [1.0.0]
 

@@ -1115,7 +1115,10 @@ namespace FlaxAssetManager.UI
                 }
                 else
                 {
-                    var count = s.Manifest?.Assets?.Count ?? 0;
+                    // An index manifest has no assets of its own; what it lists are the manifests it
+                    // links, so that is the number the picker shows, matching "Linked sources (N)".
+                    var m = s.Manifest;
+                    var count = m.IsIndex ? (m.Entries?.Count ?? 0) : (m.Assets?.Count ?? 0);
                     label += $" ({count})";
                 }
                 _sourceCombo.AddItem(label);

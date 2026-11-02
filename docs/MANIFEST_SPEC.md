@@ -517,3 +517,5 @@ Rules enforced by `AssetSourceManager.ValidateIndex` (the whole index is rejecte
 
 An index installs nothing, caches nothing as content, and writes nothing to `.installed.json`.
 
+**Display count.** The source picker (`ComboBox`) shows the number of items that source's list shows: `entries[]` length for an index, `assets[]` length for a pack manifest (`FlaxAssetManagerWindow.OnFetchedMainThread`, the same `IsIndex` branch `AssetSourceManager` uses for its fetch log). An index with 15 entries reads `Master index (15)` next to a list headed `Linked sources (15)`.
+
