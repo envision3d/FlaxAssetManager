@@ -72,6 +72,19 @@ namespace FlaxAssetManager.Core.Models
         [JsonProperty("resolvedCommit")] public string ResolvedCommit { get; set; }
         [JsonProperty("installPath")] public string InstallPath { get; set; }
         [JsonProperty("files")] public List<string> Files { get; set; } = new List<string>();
+        /// <summary>
+        /// License, author and credit line as the manifest declared them at install time, plus the source's
+        /// display name and canonical website. A record that only pointed at sourceId/packId reports the
+        /// rights of today's catalog for files downloaded years ago, and a source the user later removes
+        /// leaves the project with installed files and no record of what they may be used for. These
+        /// fields are the snapshot the project ships by: they feed ATTRIBUTIONS.md and Copy credit line.
+        /// </summary>
+        [JsonProperty("license")] public string License { get; set; }
+        [JsonProperty("licenseUrl")] public string LicenseUrl { get; set; }
+        [JsonProperty("author")] public string Author { get; set; }
+        [JsonProperty("credit")] public string Credit { get; set; }
+        [JsonProperty("sourceName")] public string SourceName { get; set; }
+        [JsonProperty("sourceWebsite")] public string SourceWebsite { get; set; }
 
         /// <summary>
         /// Content-tree assets this install PRODUCED rather than downloaded: the generated

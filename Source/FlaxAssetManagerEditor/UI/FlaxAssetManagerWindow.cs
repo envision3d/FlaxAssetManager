@@ -92,6 +92,11 @@ namespace FlaxAssetManager.UI
         private HorizontalPanel _websiteLinkRow;
         private FlatButton _websiteLinkButton;
         private string _websiteUrl;
+        // Credit line of the selected pack: the manifest's `credit`, or name + author + license + the
+        // source's website. Null when there is nothing to credit, which hides the row and its button.
+        private TextLabel _detailsCredit;
+        private FlatButton _copyCreditButton;
+        private string _creditLine;
         private PackEntry _selectedPack;
         private FetchedSource _selectedSource;
         private ListRow _selectedRow;
@@ -157,8 +162,11 @@ namespace FlaxAssetManager.UI
             _materialService = new MaterialCreatorService(settings);
             _pluginUpdater = new PluginUpdateService(settings);
             _sourceManager.Fetched += OnFetched;
-            _previewHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            _audioHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
+            // Both send the self-identifying UA (HttpIdentity): preview images and audio samples come from
+            // the publisher's own site, fetched on every selection change, and a host should be able to
+            // see that it is FlaxAssetManager asking and not a browser.
+            _previewHttpClient = HttpIdentity.NewClient(TimeSpan.FromSeconds(15));
+            _audioHttpClient = HttpIdentity.NewClient(TimeSpan.FromSeconds(120));
             // The installer raises these from its worker threads; both write the status bar, so they
             // go through the window's main-thread queue (Progress<T> could not marshal them).
             _installer.Log += s => QueueOnMain(() =>
@@ -493,6 +501,17 @@ namespace FlaxAssetManager.UI
                 AnchorPreset = AnchorPresets.HorizontalStretchTop,
                 Offsets = Margin.Zero,
             };
+            // The attribution the selected pack's license asks for. Wrapping and auto-height, because a
+            // credit is a sentence while a KeyValueRow value is one clipped line.
+            _detailsCredit = new TextLabel("", TextLabelStyle.Caption, dim: true)
+            {
+                Wrapping = TextWrapping.WrapWords,
+                AutoHeight = true,
+                Parent = _detailsPanel,
+                AnchorPreset = AnchorPresets.HorizontalStretchTop,
+                Offsets = Margin.Zero,
+                Visible = false,
+            };
 
             // Action buttons: created before the preview so they stay above it in the
             // scrollable details panel and are always visible when a pack is selected.
@@ -535,6 +554,25 @@ namespace FlaxAssetManager.UI
                 TooltipText = "Play the pack's first audio file live from its source URL.",
             };
             _previewButton.Clicked += OnPreviewClicked;
+            // Ships the credit line of the selected pack. A license that requires credit (CC-BY, an
+            // attribution clause) is satisfied by a sentence in the shipped credits, and that sentence is
+            // the manifest's data - not something the user should reconstruct from a license deed.
+            _copyCreditButton = new FlatButton("Copy credit line")
+            {
+                Parent = actionsPanel,
+                Width = 120,
+                Height = 26,
+                Visible = false,
+                TooltipText = "Copies the attribution line for this pack to the clipboard.",
+            };
+            _copyCreditButton.Clicked += () =>
+            {
+                if (string.IsNullOrWhiteSpace(_creditLine))
+                    return;
+                try { Clipboard.Text = _creditLine; } catch { }
+                if (_statusBar != null)
+                    _statusBar.SetStatus("Credit line copied. Paste it into your project's credits; the license, not this line, decides what is required.");
+            };
 
             // Shown only for an entry of an index manifest: it adds that manifest URL to the sources
             // list. Pack actions (Install/Remove/Preview) do not apply while an index is selected.
@@ -1134,6 +1172,7 @@ namespace FlaxAssetManager.UI
             _metaRowType.Set("Type", "");
             _metaRowCategory.Set("Category", "");
             _metaRowLicense.Set("License", "");
+            ShowCredit(null);
             _metaRowSource.Set("From", "");
             _detailsInfo.Text = "Choose an asset in the list to view details.";
             _detailsStatus.Text = "";
@@ -1263,6 +1302,7 @@ namespace FlaxAssetManager.UI
             _metaRowType.Set("Type", "Linked manifest");
             _metaRowCategory.Set("Category", entry.Tags != null && entry.Tags.Count > 0 ? string.Join(", ", entry.Tags) : "—");
             _metaRowLicense.Set("License", "—");
+            ShowCredit(null);
             _metaRowSource.Set("From", SafeHost(entry.Url));
             _detailsInfo.Text = (string.IsNullOrWhiteSpace(entry.Description) ? "" : entry.Description + "\n\n") +
                                 $"sourceId: {entry.SourceId}\nurl: {entry.Url}" +
@@ -1309,6 +1349,29 @@ namespace FlaxAssetManager.UI
         {
             _websiteLinkRow.Visible = visible;
             _websiteLinkButton.Visible = visible;
+        }
+        /// <summary>
+        /// Shows the credit line of the selected pack and enables <b>Copy credit line</b> with it. Hidden
+        /// when there is nothing to credit, which is the common case: the CC0 sources of the shipped
+        /// catalog owe no attribution, and an empty row with a copy button is a shrug, not a credit.
+        /// <para>
+        /// The line is the manifest's own words - its <c>credit</c>, else pack name + author + license +
+        /// the source's website. The same function builds the line copied into the install record and the
+        /// one <c>ATTRIBUTIONS.md</c> is rendered from, so the button, the record and the file cannot
+        /// disagree about what a pack owes.
+        /// </para>
+        /// </summary>
+        private void ShowCredit(string line)
+        {
+            _creditLine = string.IsNullOrWhiteSpace(line) ? null : line.Trim();
+            var visible = _creditLine != null;
+            _detailsCredit.Visible = visible;
+            _copyCreditButton.Visible = visible;
+            if (!visible)
+                return;
+
+            _detailsCredit.Text = _creditLine;
+            _copyCreditButton.TooltipText = "Copies this pack's attribution line to the clipboard, for your project's credits.\n" + _creditLine;
         }
 
         /// <summary>
@@ -1561,6 +1624,7 @@ namespace FlaxAssetManager.UI
                 _metaRowType.Set("Type", "");
                 _metaRowCategory.Set("Category", "");
                 _metaRowLicense.Set("License", "");
+                ShowCredit(null);
                 _metaRowSource.Set("From", "");
                 _detailsInfo.Text = "Choose an asset in the list to view details.";
                 _detailsStatus.Text = "";
@@ -1889,6 +1953,7 @@ namespace FlaxAssetManager.UI
             _metaRowType.Set("Type", pack.PackType.ToString());
             _metaRowCategory.Set("Category", string.IsNullOrWhiteSpace(pack.Category) ? "—" : pack.Category);
             _metaRowLicense.Set("License", string.IsNullOrWhiteSpace(pack.License) ? "—" : pack.License);
+            ShowCredit(CreditLine.Build(pack, _selectedSource?.Manifest));
             _metaRowSource.Set("From", SafeHost(_selectedSource?.Url));
 
             // Variant dropdown: rebuild items, restore the last selected variant (persisted per
@@ -2331,7 +2396,7 @@ namespace FlaxAssetManager.UI
             string error = null;
             try
             {
-                okInstall = await _installer.InstallAsync(pack, source.Manifest.SourceId, source.Url, progress, ct, variantId);
+                okInstall = await _installer.InstallAsync(pack, source.Manifest.SourceId, source.Url, progress, ct, variantId, source.Manifest);
                 // Only the texture-pack shape calls the material service: CreateMaterial imports the
                 // textures and logs a warning when nothing resolved, so running it for a model, script
                 // or archive pack would be wasted work plus a misleading log line.
@@ -2361,7 +2426,7 @@ namespace FlaxAssetManager.UI
                     else if (okInstall && withMaterial)
                         _statusBar.SetStatus($"Installed {pack.Name} v{pack.Version}, but no material was created (no PBR role resolved).");
                     else if (okInstall)
-                        _statusBar.SetStatus($"Installed {pack.Name} v{pack.Version}");
+                        _statusBar.SetStatus($"Installed {pack.Name} v{pack.Version}  ·  license: {pack.License ?? "not declared by the source"}");
                     else
                         _statusBar.SetStatus($"Install failed for {pack.Name}");
                 }
@@ -2369,6 +2434,9 @@ namespace FlaxAssetManager.UI
                 {
                     SelectPack(pack, row);
                     RebuildAssetList();
+                    // The obligations of an install outlive this window: ATTRIBUTIONS.md is written from
+                    // the install record, not from the session, so say once where that list is.
+                    Debug.Log($"FlaxAssetManager: '{pack.Name}' installed under license {pack.License ?? "not declared by the source"}; the project's credits list is {_settings.AttributionsPath}");
                     // Selection (and the "Installed" chip) is reapplied by RebuildAssetList.
                 }
             });

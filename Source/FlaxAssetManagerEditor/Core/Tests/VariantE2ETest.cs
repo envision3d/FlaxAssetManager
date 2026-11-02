@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using FlaxEngine;
 using FlaxAssetManager.Core.Models;
 using FlaxAssetManager.Core.Services;
+using FlaxAssetManager.Core.Utils;
 
 namespace FlaxAssetManager.Core.Tests
 {
@@ -165,9 +166,9 @@ namespace FlaxAssetManager.Core.Tests
                 }
                 Check(AssetSourceManager.ValidateManifest(ArcManifest(_ => { })) == null, "archivePack minimal is valid");
                 Check(AssetSourceManager.ValidateManifest(ArcManifest(p => p.Files = new List<FileEntry> { F("a.jpg") }))
-                    == "Pack arc: archivePack must not have files[] (the zip provides them).", "archivePack with files rejected");
+                    ?.Contains("archivePack must not have files") == true, "archivePack with files rejected");
                 Check(AssetSourceManager.ValidateManifest(ArcManifest(p => p.Distribution = null))
-                    == "Pack arc: archivePack requires distribution.", "archivePack w/o distribution rejected");
+                    ?.Contains("archivePack requires distribution") == true, "archivePack w/o distribution rejected");
                 Check(AssetSourceManager.ValidateManifest(ArcManifest(p => p.Distribution = new DistributionInfo { Kind = "gitRepo", Url = "https://example.com/x.git" }))
                     == "Pack arc: archivePack distribution.kind must be 'archive'.", "archivePack with gitRepo kind rejected");
                 Check(AssetSourceManager.ValidateManifest(ArcManifest(p => p.Distribution = new DistributionInfo { Kind = "archive", Url = "https://example.com/packs/arc.tar.gz" }))
@@ -176,7 +177,7 @@ namespace FlaxAssetManager.Core.Tests
                     == "Pack arc: archivePack must not have variants[].", "archivePack with variants rejected");
 
                 // ---- 4. Real install: variant A, then variant B over it ----
-                bool okA = await installer.InstallAsync(pack, man.SourceId, src.Url, null, CancellationToken.None, vA.Id);
+                bool okA = await installer.InstallAsync(pack, man.SourceId, src.Url, null, CancellationToken.None, vA.Id, manifest: man);
                 Check(okA, $"install variant '{vA.Id}' succeeds");
                 var instA = settings.FindInstalled(man.SourceId, pack.Id);
                 Check(instA != null && instA.Variant == vA.Id, $"installed record tracks variant '{vA.Id}'");
@@ -191,7 +192,7 @@ namespace FlaxAssetManager.Core.Tests
                 Check(instA != null && instA.Files.All(f => f.Replace('\\', '/').Contains("/" + AssetInstallerService.FilesSubFolder + "/" + subA + "/")),
                     $"variant '{vA.Id}' installs under files/{subA}/");
 
-                bool okB = await installer.InstallAsync(pack, man.SourceId, src.Url, null, CancellationToken.None, vB.Id);
+                bool okB = await installer.InstallAsync(pack, man.SourceId, src.Url, null, CancellationToken.None, vB.Id, manifest: man);
                 Check(okB, $"reinstall as variant '{vB.Id}' succeeds");
                 var instB = settings.FindInstalled(man.SourceId, pack.Id);
                 Check(instB != null && instB.Variant == vB.Id, $"installed record updated to variant '{vB.Id}'");
@@ -213,6 +214,24 @@ namespace FlaxAssetManager.Core.Tests
                 Check(instB != null && instB.Files.All(f => f.Replace('\\', '/').Contains("/" + AssetInstallerService.FilesSubFolder + "/" + subB + "/")),
                     $"variant '{vB.Id}' installs under files/{subB}/");
 
+                // ---- 4b. Rights snapshot: what the project ships, recorded at install time ----
+                // A shipped game's credits are assembled from these fields, so an install that
+                // records no license is an obligation quietly lost - and the values have to be the
+                // manifest's, copied at install, not looked up later: a catalog can relabel a source,
+                // a publisher can relicense, and the record is what the project can still prove.
+                Check(!string.IsNullOrWhiteSpace(instB.License), "install record carries the pack's license");
+                Check(instB.License == pack.License, "install record's license is the manifest's, verbatim");
+                Check(!string.IsNullOrWhiteSpace(instB.LicenseUrl), "install record carries a license URL");
+                Check(!string.IsNullOrWhiteSpace(instB.SourceName), "install record names the source it came from");
+                Check(!string.IsNullOrWhiteSpace(CreditLine.Build(pack, man)), "a credit line can be built for the pack");
+                Check(System.IO.File.Exists(settings.AttributionsPath), "installing wrote ATTRIBUTIONS.md into Content/FlaxAssetManager");
+                var attr = System.IO.File.Exists(settings.AttributionsPath)
+                    ? System.IO.File.ReadAllText(settings.AttributionsPath) : "";
+                Check(attr.Contains(pack.Id), "ATTRIBUTIONS.md names the installed pack");
+                Check(attr.Contains(man.SourceId), "ATTRIBUTIONS.md names the source the pack came from");
+                if (!CreditLine.NoCreditRequired(pack.License))
+                    Check(!string.IsNullOrWhiteSpace(instB.Credit), $"a {pack.License} pack records a credit line");
+
                 // ---- 5. UI: the window's variant selector (all GUI work marshalled to the main thread) ----
                 var window = GetField(plugin, "_window");
                 Check(window != null, "window exists");
@@ -230,7 +249,7 @@ namespace FlaxAssetManager.Core.Tests
                 int srcIdx = -1;
                 if (list != null)
                     for (int i = 0; i < list.Count; i++)
-                        if (ReferenceEquals(list[i].Manifest, man)) srcIdx = i;
+                        if (ReferenceEquals(list[i].Manifest, man) || list[i].Manifest?.SourceId == man.SourceId) srcIdx = i;
                 Check(srcIdx >= 0, $"source '{man.SourceId}' present in the source combo");
                 if (srcIdx < 0) { Report(); return; }
 
@@ -252,7 +271,10 @@ namespace FlaxAssetManager.Core.Tests
                         var cur = current.GetValue(en);
                         var p = (PackEntry)cur.GetType().GetField("Item1").GetValue(cur);
                         var r = cur.GetType().GetField("Item2").GetValue(cur);
-                        if (ReferenceEquals(p, pack)) { rowPack = p; rowItem = r; }
+                        // Identity is by id, not reference: the window keeps its own fetch snapshot
+                        // (_currentSources = LastFetched.ToList()), so a window PackEntry and the pack
+                        // this harness probed are two objects from two fetch generations of one manifest.
+                        if (p.Id == pack.Id) { rowPack = p; rowItem = r; }
                         if (p.Variants == null && noVarPack == null) { noVarPack = p; noVarRow = r; }
                     }
                 });

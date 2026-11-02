@@ -17,6 +17,7 @@ namespace FlaxAssetManager.Core.Services
         private readonly string _settingsPath;
         private readonly string _sourcesPath;
         private readonly string _installManifestPath;
+        private readonly string _attributionsPath;
 
         public FlaxAssetManagerSettings Settings { get; private set; }
         public AssetSourceConfig SourceConfig { get; private set; }
@@ -68,12 +69,19 @@ namespace FlaxAssetManager.Core.Services
         /// </summary>
         public string SourcesJsonPath => _sourcesPath;
 
+        /// <summary>
+        /// Absolute path of the generated <c>Content/FlaxAssetManager/ATTRIBUTIONS.md</c>, the list of
+        /// every pack this project installed and the license each one came with.
+        /// </summary>
+        public string AttributionsPath => _attributionsPath;
+
         public SettingsService()
         {
             var baseDir = Path.Combine(Globals.ProjectFolder, "Content", "FlaxAssetManager");
             _settingsPath = Path.Combine(baseDir, "Settings.json");
             _sourcesPath = Path.Combine(baseDir, "Sources.json");
             _installManifestPath = Path.Combine(baseDir, ".installed.json");
+            _attributionsPath = Path.Combine(baseDir, AttributionsService.FileName);
             Load();
         }
 
@@ -212,6 +220,10 @@ namespace FlaxAssetManager.Core.Services
             {
                 EnsureDirectories();
                 File.WriteAllText(_installManifestPath, JsonConvert.SerializeObject(Installed, Formatting.Indented));
+                // One choke point for the project's attribution list: every install, remove and
+                // material-update writes its record through here, so ATTRIBUTIONS.md is never stale by
+                // more than the write that just happened, and no new call site has to remember it.
+                AttributionsService.TryWrite(Path.GetDirectoryName(_installManifestPath), Installed);
             }
             catch (Exception e)
             {

@@ -70,8 +70,9 @@ namespace FlaxAssetManager.Core.Services
         public AssetSourceManager(SettingsService settings)
         {
             _settings = settings;
-            _httpClient = new HttpClient();
-            _httpClient.Timeout = TimeSpan.FromSeconds(30);
+            // Self-identifying UA: manifest hosts are publishers, not CDNs serving browsers, and the
+            // polite contract with them (rate limits, contact route) starts with saying who is asking.
+            _httpClient = HttpIdentity.NewClient(TimeSpan.FromSeconds(30));
             _jsonSettings = new JsonSerializerSettings
             {
                 MissingMemberHandling = MissingMemberHandling.Ignore,
@@ -444,6 +445,14 @@ namespace FlaxAssetManager.Core.Services
                 reason = $"entry '{entryPath}' has an executable or script-payload extension '{ext}', which an archive cannot deliver; use packType \"pluginProject\" for code.";
                 return ArchiveEntryCheck.Reject;
             }
+            // A license file is the one "doc" an archive must not lose. Apache-2.0 §4 requires the
+            // license text, and any NOTICE, to travel with distributed copies; MIT and Zlib require the
+            // copyright notice; CC-BY asks that the license be shown - and the packs that carry those
+            // obligations reach this project as archives, so the doc rule below would delete the very
+            // file the license depends on. Name-matched and plain-text only, and code extensions are
+            // already refused above, so this widens nothing an archive may install.
+            if (IsLegalDocEntry(entryPath))
+                return ArchiveEntryCheck.Extract;
             // Docs, C++ sources, JSON, loose data: not allowed as installed assets, and an archive did not
             // get them from a manifest the pack author controls, so drop the entry instead of failing the
             // install over files that were never going to be assets.
@@ -453,6 +462,45 @@ namespace FlaxAssetManager.Core.Services
                 return ArchiveEntryCheck.Skip;
             }
             return ArchiveEntryCheck.Extract;
+        }
+        /// <summary>
+        /// Archive entry names that carry a license, notice or attribution, in the spellings upstream
+        /// publishers use. Matched on the file name (any folder inside the zip), case-insensitively.
+        /// </summary>
+        private static readonly HashSet<string> LegalDocNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "LICENSE", "LICENSE.md", "LICENSE.txt", "LICENSE.md.txt", "LICENSE-MIT", "LICENSE-APACHE",
+            "LICENCE", "LICENCE.md", "LICENCE.txt", "COPYING", "COPYING.md", "COPYING.txt", "COPYRIGHT",
+            "COPYRIGHT.txt", "NOTICE", "NOTICE.md", "NOTICE.txt", "ATTRIBUTION", "ATTRIBUTIONS",
+            "ATTRIBUTIONS.md", "ATTRIBUTION.md", "CREDITS", "CREDITS.md", "OFL", "OFL.txt", "OFL.md",
+            "EULA", "EULA.txt", "APACHE-LICENSE", "APACHE-LICENSE-2.0", "MIT-LICENSE", "MIT-LICENSE.txt",
+            "OPEN-SIL-LICENSE", "OPEN-SIL.txt", "CC0", "CC0-LICENSE", "CC0-LICENSE.txt",
+        };
+
+        // Plain-text extensions a legal doc is allowed to use. A "LICENSE.png" stays the asset it is.
+        private static readonly HashSet<string> LegalDocExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "", ".md", ".txt", ".text", ".rst", ".html", ".pdf",
+        };
+
+        /// <summary>
+        /// True when an archive entry is a license / notice / attribution file that has to survive the
+        /// install (see <see cref="CheckArchiveEntryName"/>). Name and extension only; the content is
+        /// never parsed, and the plugin does not verify that what a publisher named LICENSE says what
+        /// the manifest's <c>license</c> field says - a manifest that mislabels its license is a catalog
+        /// bug, and the file the plugin keeps is the publisher's own text, which is the better evidence.
+        /// </summary>
+        public static bool IsLegalDocEntry(string entryPath)
+        {
+            if (string.IsNullOrWhiteSpace(entryPath))
+                return false;
+            var name = System.IO.Path.GetFileName(entryPath.Replace('\\', '/'));
+            if (string.IsNullOrEmpty(name))
+                return false;
+            var ext = System.IO.Path.GetExtension(name);
+            if (!string.IsNullOrEmpty(ext) && !LegalDocExts.Contains(ext))
+                return false;
+            return LegalDocNames.Contains(name);
         }
 
         /// <summary>

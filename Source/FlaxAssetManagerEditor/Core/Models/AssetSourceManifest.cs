@@ -31,6 +31,21 @@ namespace FlaxAssetManager.Core.Models
 
         [JsonProperty("description", NullValueHandling = NullValueHandling.Ignore)]
         public string Description { get; set; }
+        /// <summary>
+        /// Source-wide defaults for pack-level <c>author</c>, <c>credit</c> and <c>licenseUrl</c>, used by
+        /// the packs of this manifest that do not declare their own. A source whose every pack comes from
+        /// one publisher (Kenney, Quaternius, Twemoji) states the credit obligation once here; a source
+        /// whose license varies per pack (SoundBible, Game Icons) states it per pack and leaves these off.
+        /// Written into <c>ATTRIBUTIONS.md</c> and the install record, never used for fetching.
+        /// </summary>
+        [JsonProperty("author", NullValueHandling = NullValueHandling.Ignore)]
+        public string Author { get; set; }
+
+        [JsonProperty("credit", NullValueHandling = NullValueHandling.Ignore)]
+        public string Credit { get; set; }
+
+        [JsonProperty("licenseUrl", NullValueHandling = NullValueHandling.Ignore)]
+        public string LicenseUrl { get; set; }
 
         [JsonProperty("assets", NullValueHandling = NullValueHandling.Ignore)]
         public List<PackEntry> Assets { get; set; }

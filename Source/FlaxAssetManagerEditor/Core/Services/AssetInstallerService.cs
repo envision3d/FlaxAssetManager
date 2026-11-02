@@ -64,21 +64,31 @@ namespace FlaxAssetManager.Core.Services
         {
             _settings = settings;
             _sourceManager = sourceManager;
-            _httpClient = new HttpClient();
-            _httpClient.Timeout = TimeSpan.FromSeconds(60);
+            // Self-identifying UA on every download: an asset host reading its access log sees
+            // FlaxAssetManager, not a generic browser (HttpIdentity; Poly Haven's API terms ask for this).
+            _httpClient = HttpIdentity.NewClient(TimeSpan.FromSeconds(60));
         }
 
-        public async Task<bool> InstallAsync(PackEntry pack, string sourceId, string sourceUrl, IProgress<(float, string)> progress = null, CancellationToken ct = default, string variantId = null)
+        /// <summary>
+        /// Installs one pack - asset files, an archive, or a plugin git clone, chosen by packType.
+        /// <para>
+        /// <paramref name="manifest"/> is the manifest <paramref name="pack"/> came from, used only to copy
+        /// license, author, credit line and the source's website into the install record: the provenance a
+        /// project ships by. It is never read for URLs, so fetching stays the per-file and per-archive job
+        /// of the pack itself.
+        /// </para>
+        /// </summary>
+        public async Task<bool> InstallAsync(PackEntry pack, string sourceId, string sourceUrl, IProgress<(float, string)> progress = null, CancellationToken ct = default, string variantId = null, AssetSourceManifest manifest = null)
         {
             try
             {
                 Report(progress, 0f, $"Installing {pack.Name}...");
                 if (pack.PackType == PackType.PluginProject)
-                    return await InstallPluginProjectAsync(pack, sourceId, sourceUrl, progress, ct);
+                    return await InstallPluginProjectAsync(pack, sourceId, sourceUrl, progress, ct, manifest);
                 else if (pack.PackType == PackType.ArchivePack)
-                    return await InstallArchivePackAsync(pack, sourceId, sourceUrl, progress, ct);
+                    return await InstallArchivePackAsync(pack, sourceId, sourceUrl, progress, ct, manifest);
                 else
-                    return await InstallAssetPackAsync(pack, sourceId, sourceUrl, progress, ct, variantId);
+                    return await InstallAssetPackAsync(pack, sourceId, sourceUrl, progress, ct, variantId, manifest);
             }
             catch (Exception e)
             {
@@ -88,7 +98,7 @@ namespace FlaxAssetManager.Core.Services
             }
         }
 
-        private async Task<bool> InstallAssetPackAsync(PackEntry pack, string sourceId, string sourceUrl, IProgress<(float, string)> progress, CancellationToken ct, string variantId = null)
+        private async Task<bool> InstallAssetPackAsync(PackEntry pack, string sourceId, string sourceUrl, IProgress<(float, string)> progress, CancellationToken ct, string variantId = null, AssetSourceManifest manifest = null)
         {
             var files = pack.GetEffectiveFiles(variantId);
             // A stale variant id (persisted in Settings.json, or a manifest that dropped a variant)
@@ -218,6 +228,17 @@ namespace FlaxAssetManager.Core.Services
                 Variant = variantId,
                 DistributionUrl = null,
                 InstallPath = Path.Combine(_settings.Settings.ContentDestination, Sanitize(sourceId), Sanitize(pack.Id)),
+                // License, author and credit line as the manifest declared them, copied into the record
+                // beside the files they describe. The live pack's license string is the catalog's, so a
+                // record that only named sourceId/packId reports today's terms for a pack installed years
+                // ago, and a source the user deletes from Sources.json takes its manifest with it. This
+                // snapshot is what ATTRIBUTIONS.md and Copy credit line read.
+                License = pack.License,
+                LicenseUrl = pack.LicenseUrl ?? manifest?.LicenseUrl,
+                Author = pack.Author ?? manifest?.Author,
+                Credit = pack.Credit ?? manifest?.Credit,
+                SourceName = manifest?.SourceName,
+                SourceWebsite = manifest?.Website ?? manifest?.HomepageUrl,
                 Files = installedFiles,
                 GeneratedAssets = MergeGeneratedAssets(replaced?.GeneratedAssets, generatedAssets),
             });
@@ -229,7 +250,7 @@ namespace FlaxAssetManager.Core.Services
             return true;
         }
 
-        private async Task<bool> InstallArchivePackAsync(PackEntry pack, string sourceId, string sourceUrl, IProgress<(float, string)> progress, CancellationToken ct)
+        private async Task<bool> InstallArchivePackAsync(PackEntry pack, string sourceId, string sourceUrl, IProgress<(float, string)> progress, CancellationToken ct, AssetSourceManifest manifest = null)
         {
             var dist = pack.Distribution;
             Report(progress, 0f, $"Downloading {pack.Name}...");
@@ -262,8 +283,10 @@ namespace FlaxAssetManager.Core.Services
                         // *before* anything is written: an entry that delivers a C# script, an executable,
                         // a native library or an interpreter script fails the whole install, so an archive
                         // can never land code in the content tree the way assetPack files are forbidden to.
-                        // Docs and config (README.md, license.txt, .gitignore) are not code and upstream
+                        // Docs and config (README.md, .gitignore, JSON) are not code and upstream
                         // archives are full of them, so those entries are dropped, not treated as fatal.
+                        // LICENSE / NOTICE / ATTRIBUTIONS are the exception, kept by name: they are the
+                        // files some licenses require to travel with the assets they ship with.
                         var installable = new List<System.IO.Compression.ZipArchiveEntry>(entries.Count);
                         int skipped = 0;
                         foreach (var entry in entries)
@@ -350,6 +373,13 @@ namespace FlaxAssetManager.Core.Services
                 Variant = null,
                 DistributionUrl = dist.Url,
                 InstallPath = Path.Combine(_settings.Settings.ContentDestination, Sanitize(sourceId), Sanitize(pack.Id)),
+                // Provenance snapshot; see the asset-pack install for why these are copied, not looked up.
+                License = pack.License,
+                LicenseUrl = pack.LicenseUrl ?? manifest?.LicenseUrl,
+                Author = pack.Author ?? manifest?.Author,
+                Credit = pack.Credit ?? manifest?.Credit,
+                SourceName = manifest?.SourceName,
+                SourceWebsite = manifest?.Website ?? manifest?.HomepageUrl,
                 Files = extractedFiles,
             });
             _settings.SaveInstalled();
@@ -372,7 +402,7 @@ namespace FlaxAssetManager.Core.Services
         /// collides with a folder the manager did not create all leave the project unchanged.
         /// </para>
         /// </summary>
-        private async Task<bool> InstallPluginProjectAsync(PackEntry pack, string sourceId, string sourceUrl, IProgress<(float, string)> progress, CancellationToken ct)
+        private async Task<bool> InstallPluginProjectAsync(PackEntry pack, string sourceId, string sourceUrl, IProgress<(float, string)> progress, CancellationToken ct, AssetSourceManifest manifest = null)
         {
             var gitUrl = pack.Distribution.Url;
             var branch = pack.Distribution.Branch;
@@ -542,6 +572,13 @@ namespace FlaxAssetManager.Core.Services
                 DistributionUrl = gitUrl,
                 ResolvedCommit = resolvedCommit,
                 InstallPath = $"Plugins/{folderName}",
+                // Provenance snapshot; see the asset-pack install for why these are copied, not looked up.
+                License = pack.License,
+                LicenseUrl = pack.LicenseUrl ?? manifest?.LicenseUrl,
+                Author = pack.Author ?? manifest?.Author,
+                Credit = pack.Credit ?? manifest?.Credit,
+                SourceName = manifest?.SourceName,
+                SourceWebsite = manifest?.Website ?? manifest?.HomepageUrl,
                 Files = files
             });
             _settings.SaveInstalled();

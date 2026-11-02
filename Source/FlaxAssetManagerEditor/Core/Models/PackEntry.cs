@@ -36,6 +36,27 @@ namespace FlaxAssetManager.Core.Models
         [JsonProperty("license", NullValueHandling = NullValueHandling.Ignore)]
         public string License { get; set; }
 
+        [JsonProperty("licenseUrl", NullValueHandling = NullValueHandling.Ignore)]
+        public string LicenseUrl { get; set; }
+
+        /// <summary>
+        /// Who made this pack, in the words the upstream publisher uses. Separate from
+        /// <see cref="Credit"/> because a manifest author writes the name once and the credit line is
+        /// derived from it together with <see cref="License"/>, not typed out per pack.
+        /// </summary>
+        [JsonProperty("author", NullValueHandling = NullValueHandling.Ignore)]
+        public string Author { get; set; }
+
+        /// <summary>
+        /// The attribution sentence the license asks for, verbatim, for licenses that require credit
+        /// (CC-BY, Apache-2.0 notices, a custom "commercial with attribution" license). It is copied
+        /// into the install record, surfaced as <b>Copy credit line</b>, and written into the project's
+        /// <c>ATTRIBUTIONS.md</c>, so shipping a project can satisfy the obligation without the user
+        /// reconstructing the wording from license legalese. A CC0 pack leaves it empty.
+        /// </summary>
+        [JsonProperty("credit", NullValueHandling = NullValueHandling.Ignore)]
+        public string Credit { get; set; }
+
         /// <summary>
         /// For assetPack: explicit list of raw asset files.
         /// For pluginProject/archivePack: null (use Distribution instead).
