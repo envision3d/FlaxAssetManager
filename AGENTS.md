@@ -30,7 +30,7 @@ Source/FlaxAssetManagerEditor/Core/Models/
 Source/FlaxAssetManagerEditor/Core/Services/
   SettingsService.cs        # owns Content/FlaxAssetManager/{Settings,Sources,.installed}.json
   AssetSourceManager.cs     # HttpClient 30s, ValidateManifest (STRICT) + ValidateIndex (index manifests)
-  AssetInstallerService.cs  # SemaphoreSlim(6), SHA256, git clone into staging, zip extract (entry-name rule), reference injection; uninstall deletes files[] + generatedAssets + imported sidecars, then prunes the pack folder
+  AssetInstallerService.cs  # SemaphoreSlim(6), SHA256, git clone into staging, zip extract (entry-name rule), reference injection; VariantSubFolder is the one layout authority (files/<variant>/ for a variant install), RemoveReplacedInstall + PruneStaleVariantFolders drop the set a variant switch replaces, PruneEmptyFolders prunes to the pack root; uninstall deletes files[] + generatedAssets + imported sidecars, then prunes the pack folder
 Source/FlaxAssetManagerEditor/Core/Services/MaterialCreatorService.cs # PBR role detection + surface-graph rewiring + model slot assignment (stock API, engine calls marshalled to the main thread); records the created M_<packId>.flax on the install entry (RecordGeneratedAsset)
 Source/FlaxAssetManagerEditor/Core/Services/PluginUpdateService.cs # self-update: git pull --ff-only in this plugin's own folder, then ScriptsBuilder.MarkWorkspaceDirty + Compile; refuses a dirty/detached/no-upstream checkout before writing; the folder is DISCOVERED by its project file (file name, or the Name inside it) — assembly ancestors, the open project's References, .installed.json records, a bounded Plugins/ scan, the documented location — never by an assumed folder name, and always contained inside Globals.ProjectFolder
 Source/FlaxAssetManagerEditor/Core/Utils/MaterialGraphBuilder.cs # creates the material asset (Editor.CreateAsset) and builds its PBR surface graph (root-box wiring, multipliers, public parameters); ValidateRootInputBoxes checks the hard-coded box ids against the engine's own box metadata before wiring
@@ -90,7 +90,7 @@ Pack `PackEntry`: `id, name, packType, version` required + `description?, catego
 - `packType:"pluginProject"` → `distribution:{kind:"gitRepo", url, branch?, commit?}` (no `files`)
 - `packType:"archivePack"` → `distribution:{kind:"archive", url(…zip), sha256?}` (no `files`, no `variants`)
 
-**Variants** (`variants[]`, assetPack only, `PackEntry.PackVariant`): with `variants[]` present, base `files[]` becomes optional; `PackEntry.GetEffectiveFiles(variantId)` resolves the install set (empty/unknown id → base `files[]`, else the **first** variant when base is empty). Selection persists per pack in `Settings.json` `selectedVariants` (key `sourceId/packId`) and per install in `.installed.json` `variant`.
+**Variants** (`variants[]`, assetPack only, `PackEntry.PackVariant`): with `variants[]` present, base `files[]` becomes optional; `PackEntry.GetEffectiveFiles(variantId)` resolves the install set (empty/unknown id → base `files[]`, else the **first** variant when base is empty). Selection persists per pack in `Settings.json` `selectedVariants` (key `sourceId/packId`) and per install in `.installed.json` `variant`. A variant install writes its files into its own subfolder of `files/` (see Destinations), so installing a variant removes the variant installed before it instead of overwriting it.
 
 File `FileEntry`: `url, path, type` required + `sha256?`. `url` must be `http(s)`, `path` relative no `..` with extension, `type` in 9-value enum.
 
@@ -105,11 +105,14 @@ Matrix `docs/MANIFEST_SPEC.md` §4.1 lists every valid/invalid `packType × payl
 - `.installed.json` `{installed:[{sourceId,sourceUrl,packId,packName,packType,installedVersion,installedAt,distributionUrl?,resolvedCommit?,installPath,files[]}]}` — key `sourceId+packId`, badge via `HasUpdate` (`installedVersion != pack.version`).
 
 Destinations (downloaded files go under a `files/` subfolder; pack-*generated* assets — e.g. the created `.flax` material — stay at the pack root):
-- `FileAssetType.Script` → `ScriptDestinationFullPath/Source/.../<sanitized(sourceId)>/<sanitized(packId)>/files/<file.path>`
-- Others → `ContentDestinationFullPath/Content/.../<sanitized(sourceId)>/<sanitized(packId)>/files/<file.path>`
+
+- `FileAssetType.Script` → `ScriptDestinationFullPath/Source/.../<sanitized(sourceId)>/<sanitized(packId)>/files/[<sanitized(variantId)>/]<file.path>`
+- Others → `ContentDestinationFullPath/Content/.../<sanitized(sourceId)>/<sanitized(packId)>/files/[<sanitized(variantId)>/]<file.path>`
 - Generated material (`.flax`) → `ContentDestinationFullPath/Content/.../<sanitized(sourceId)>/<sanitized(packId)>/M_<packId>.flax` (no `files/`)
 - `pluginProject` → `Plugins/<Sanitized(lastUrlSegment)>` fixed.
 - `archivePack` → `ContentDestinationFullPath/<sourceId>/<packId>/files/` — zip entries extracted with internal layout preserved.
+
+**Variant subfolder** (`AssetInstallerService.VariantSubFolder`, the one place that knows the layout): installing a pack **with a variant selected** writes its files under `files/<sanitized(variantId)>/`, so a pack shipping 1k/2k/4k sets keeps each set — and the `.flax` assets imported from it — on its own instead of sharing one flat folder of identical names. The default file set (no `variants[]`, or base `files[]` selected) writes flat, exactly as before, and the material and imported models stay at the pack root in both cases. Because the sets share no path, the install that replaces one must delete it: `RemoveReplacedInstall` removes the replaced record's files plus their imported `.flax` sidecars and sidecar folders, the model asset the removed tier imported into the pack root (matched only against that record's own model sources — never the generated material, which the material pipeline rebuilds), and `PruneStaleVariantFolders` drops the folders of the pack's *other* declared variants (both destinations). That runs **after** the new files land, so a failed install never destroys what was already installed, and the replaced record's `generatedAssets` carry into the new record (`MergeGeneratedAssets`) because the pack root's imported models are not rewritten by a variant switch. The id is manifest data, so it is `Sanitize`d; two ids that sanitize to one folder name share that folder and the prune skips it. Pruning walks up to the pack root (`PruneEmptyFolders` + `PackRootOfRecordedFile`), never past it, and stops at the first non-empty folder.
 
 `Sanitize` replaces invalid filename chars; `..` → `_`.
 

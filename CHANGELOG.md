@@ -54,6 +54,25 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
 
 ### Changed
 
+* **Each variant of a pack keeps its own subfolder** — installing with a variant selected writes that
+  set to `<contentDestination>/<sourceId>/<packId>/files/<variant>/<path>` (scripts under
+  `scriptDestination`), so the 1K / 2K / 4K / 8K texture sets of a pack — and the `.flax` assets
+  imported from them — stop sharing one flat folder of identical names, and the Content browser shows
+  which tier each file belongs to. The default file set (no `variants[]`, or the base `files[]` =
+  **Default**) is unchanged and still installs flat. A variant set lives at paths the previous set does
+  not share, so nothing is overwritten by the switch: the install now **replaces** the set it installed
+  before it, deleting that record's files with their `.flax` sidecars and derived-data folders and the model
+  asset the removed tier imported into the pack root, dropping the folders of the pack's other declared
+  variants (in both destinations), and carrying the replaced record's `generatedAssets` into the new record so
+  **Remove** still finds every asset the pack produced. The pack's material is left for the material pipeline
+  to rebuild, so a variant without PBR roles does not lose it.
+  That cleanup runs only after the new files land, so a failed install never destroys what was already
+  installed, and folders emptied by it are pruned up to — never past — the pack root (the old uninstall
+  prune was fixed at two levels and left empty variant folders behind). The details panel names the exact
+  folder the selected variant writes to and states that installing replaces the installed set. Layout
+  policy lives in one place, `AssetInstallerService.VariantSubFolder`, which the material pipeline
+  resolves installed textures through. A variant id is manifest data, so it is `Sanitize`d like any other
+  derived folder name. No manifest schema change; see `docs/MANIFEST_SPEC.md` §5.3 and §12.
 * **The Asset Manager's backdrop is a deep navy (`#061019`)** — the kit's `Theme` palette no longer reads
   `Style.Current` (whose grey background fallback made the window look like the editor theme, not like the
   plugin): every colour is now an explicit value, and `CreateUI` paints the window's root panel with `Bg`,

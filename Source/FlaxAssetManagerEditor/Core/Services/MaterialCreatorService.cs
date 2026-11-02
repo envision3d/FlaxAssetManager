@@ -88,7 +88,7 @@ namespace FlaxAssetManager.Core.Services
             //    written straight to disk are not resolvable assets until the import pipeline has
             //    processed them; without this step every ResolveTextureId call below fails and
             //    no texture ever gets wired to the material.
-            await EnsureTexturesImportedAsync(sourceId, pack, files, progress, ct);
+            await EnsureTexturesImportedAsync(sourceId, pack, files, progress, ct, variantId);
 
             // 1. Detect the PBR role of every installed material texture from its file name.
             var singleRoleTextures = new Dictionary<MaterialRole, Guid>();
@@ -102,7 +102,7 @@ namespace FlaxAssetManager.Core.Services
                 textureFiles++;
                 var role = MaterialRoleDetector.Detect(file.Path);
                 if (role == MaterialRole.None) continue;
-                detected.Add((role, MakeAssetFullPath(sourceId, pack.Id, file.Path)));
+                detected.Add((role, MakeAssetFullPath(sourceId, pack.Id, file.Path, variantId)));
             }
 
             // Resolve each detected texture's asset id. Content.GetAssetInfo is an engine API, so
@@ -790,8 +790,10 @@ namespace FlaxAssetManager.Core.Services
         /// until each one is resolvable as an asset. Files are written straight to disk by the
         /// installer, so they only become loadable assets once the editor's import pipeline has
         /// processed them; running it here is what lets <see cref="ResolveTextureId"/> succeed.
+        /// The set this install wrote lives under the selected variant's subfolder of <c>files/</c>,
+        /// so <paramref name="variantId"/> decides which files are found and imported.
         /// </summary>
-        private async Task EnsureTexturesImportedAsync(string sourceId, PackEntry pack, List<FileEntry> files, IProgress<(float, string)> progress, CancellationToken ct)
+        private async Task EnsureTexturesImportedAsync(string sourceId, PackEntry pack, List<FileEntry> files, IProgress<(float, string)> progress, CancellationToken ct, string variantId)
         {
             // Group each material texture by the content folder its source file lives in. The
             // editor's import writes the resulting .flax asset into the target folder it is
@@ -801,16 +803,16 @@ namespace FlaxAssetManager.Core.Services
             foreach (var file in files)
             {
                 if (file.Type != FileAssetType.MaterialTextures) continue;
-                var full = Path.Combine(_settings.ContentDestinationFullPath, AssetInstallerService.Sanitize(sourceId), AssetInstallerService.Sanitize(pack.Id), AssetInstallerService.FilesSubFolder, file.Path);
+                var full = Path.Combine(_settings.ContentDestinationFullPath, AssetInstallerService.Sanitize(sourceId), AssetInstallerService.Sanitize(pack.Id), AssetInstallerService.FilesSubFolder, AssetInstallerService.VariantSubFolder(variantId), file.Path);
                 if (!File.Exists(full)) continue;
-                var relFolder = MakeFilesContentPath(sourceId, pack.Id, Path.GetDirectoryName(file.Path));
+                var relFolder = MakeFilesContentPath(sourceId, pack.Id, Path.GetDirectoryName(file.Path), variantId);
                 if (!byFolder.TryGetValue(relFolder, out var entry))
                 {
                     entry = (new List<string>(), new List<string>(), new List<TextureImportSettings>());
                     byFolder[relFolder] = entry;
                 }
                 entry.FullPaths.Add(full);
-                entry.AssetPaths.Add(MakeAssetFullPath(sourceId, pack.Id, file.Path));
+                entry.AssetPaths.Add(MakeAssetFullPath(sourceId, pack.Id, file.Path, variantId));
                 entry.Settings.Add(MakeTextureImportSettings(MaterialRoleDetector.Detect(file.Path), file.Path));
             }
             if (byFolder.Count == 0) return;
@@ -933,31 +935,33 @@ namespace FlaxAssetManager.Core.Services
         }
 
         /// <summary>
-        /// Builds the content-relative path (e.g. <c>Content/sourceId/packId/files/path.png</c>) for a
-        /// downloaded file installed under a pack's <see cref="AssetInstallerService.FilesSubFolder"/>.
-        /// Mirrors <see cref="AssetInstallerService.Sanitize"/>; used to locate the folder the raw
-        /// texture source files (and therefore their imported <c>.flax</c> assets) live in.
+        /// Builds the content-relative path (e.g. <c>Content/sourceId/packId/files/2k/path.png</c>) for a
+        /// downloaded file installed under a pack's <see cref="AssetInstallerService.FilesSubFolder"/>, inside
+        /// the variant subfolder when the install selected a variant. Mirrors
+        /// <see cref="AssetInstallerService.Sanitize"/> and <see cref="AssetInstallerService.VariantSubFolder"/>;
+        /// used to locate the folder the raw texture source files (and therefore their imported <c>.flax</c>
+        /// assets) live in.
         /// </summary>
-        private string MakeFilesContentPath(string sourceId, string packId, string filePath)
+        private string MakeFilesContentPath(string sourceId, string packId, string filePath, string variantId)
         {
-            var full = Path.Combine(_settings.ContentDestinationFullPath, AssetInstallerService.Sanitize(sourceId), AssetInstallerService.Sanitize(packId), AssetInstallerService.FilesSubFolder, filePath);
+            var full = Path.Combine(_settings.ContentDestinationFullPath, AssetInstallerService.Sanitize(sourceId), AssetInstallerService.Sanitize(packId), AssetInstallerService.FilesSubFolder, AssetInstallerService.VariantSubFolder(variantId), filePath);
             return Path.GetRelativePath(Globals.ProjectFolder, full).Replace('\\', '/');
         }
 
         /// <summary>
         /// Builds the absolute path of the <c>.flax</c> asset produced by importing a source
-        /// image installed under a pack. The engine registers an imported texture beside its
-        /// source (same folder, base name, <c>.flax</c> extension, preserving any subfolder)
-        /// under an absolute path, so this exact path is what
+        /// image installed under a pack, inside the variant subfolder that install wrote to. The engine
+        /// registers an imported texture beside its source (same folder, base name, <c>.flax</c> extension,
+        /// preserving any subfolder) under an absolute path, so this exact path is what
         /// <see cref="Content.GetAssetInfo(string, out AssetInfo)"/> and material texture slots
         /// reference.
         /// </summary>
-        private string MakeAssetFullPath(string sourceId, string packId, string filePath)
+        private string MakeAssetFullPath(string sourceId, string packId, string filePath, string variantId)
         {
             var dir = Path.GetDirectoryName(filePath);
             var fileName = Path.GetFileNameWithoutExtension(filePath) + ".flax";
             var rel = string.IsNullOrEmpty(dir) ? fileName : Path.Combine(dir, fileName);
-            return Path.Combine(_settings.ContentDestinationFullPath, AssetInstallerService.Sanitize(sourceId), AssetInstallerService.Sanitize(packId), AssetInstallerService.FilesSubFolder, rel);
+            return Path.Combine(_settings.ContentDestinationFullPath, AssetInstallerService.Sanitize(sourceId), AssetInstallerService.Sanitize(packId), AssetInstallerService.FilesSubFolder, AssetInstallerService.VariantSubFolder(variantId), rel);
         }
     }
 }

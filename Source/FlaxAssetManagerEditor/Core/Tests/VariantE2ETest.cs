@@ -184,6 +184,12 @@ namespace FlaxAssetManager.Core.Tests
                     "installed files exist on disk");
                 Check(instA != null && SameSet(NamesOf(instA.Files), NamesOf(PathsOf(vA.Files).ToList())),
                     $"installed file set matches variant '{vA.Id}' from the manifest");
+                // Each variant's set is written into its own subfolder of files/, so the record's paths name
+                // the tier - nothing overwrites another resolution's identical file names.
+                var subA = AssetInstallerService.VariantSubFolder(vA.Id);
+                var subB = AssetInstallerService.VariantSubFolder(vB.Id);
+                Check(instA != null && instA.Files.All(f => f.Replace('\\', '/').Contains("/" + AssetInstallerService.FilesSubFolder + "/" + subA + "/")),
+                    $"variant '{vA.Id}' installs under files/{subA}/");
 
                 bool okB = await installer.InstallAsync(pack, man.SourceId, src.Url, null, CancellationToken.None, vB.Id);
                 Check(okB, $"reinstall as variant '{vB.Id}' succeeds");
@@ -193,6 +199,19 @@ namespace FlaxAssetManager.Core.Tests
                     $"installed file set matches variant '{vB.Id}' from the manifest");
                 Check(instB != null && instB.Files.All(f => System.IO.File.Exists(System.IO.Path.Combine(Globals.ProjectFolder, f))),
                     "re-installed files exist on disk");
+
+                // A switch writes new paths under files/<variant>/ instead of overwriting the installed
+                // ones, so the set it replaces has to be removed by the install: one pack keeps one variant
+                // on disk, its own folder, and none of the previous variant's files or imported assets.
+                Check(instA != null && instA.Files.All(f => !System.IO.File.Exists(System.IO.Path.Combine(Globals.ProjectFolder, f))),
+                    $"installing '{vB.Id}' removed every file of '{vA.Id}'");
+                Check(instA != null && instA.Files.All(f => !System.IO.File.Exists(System.IO.Path.Combine(Globals.ProjectFolder, f + ".flax"))),
+                    $"installing '{vB.Id}' removed the imported .flax assets of '{vA.Id}'");
+                var staleDir = System.IO.Path.Combine(System.IO.Path.GetFullPath(System.IO.Path.Combine(Globals.ProjectFolder, instB?.InstallPath ?? string.Empty)),
+                                                      AssetInstallerService.FilesSubFolder, subA);
+                Check(!System.IO.Directory.Exists(staleDir), $"the '{vA.Id}' variant folder under files/ is gone");
+                Check(instB != null && instB.Files.All(f => f.Replace('\\', '/').Contains("/" + AssetInstallerService.FilesSubFolder + "/" + subB + "/")),
+                    $"variant '{vB.Id}' installs under files/{subB}/");
 
                 // ---- 5. UI: the window's variant selector (all GUI work marshalled to the main thread) ----
                 var window = GetField(plugin, "_window");

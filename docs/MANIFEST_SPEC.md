@@ -96,7 +96,7 @@ No auth headers, no zip indirection, no merging. Failure of one source does not 
 | Field | Key | Type | Req | Rules |
 |-------|-----|------|-----|-------|
 | Download URL | `url` | string | yes | Must start `http://`/`https://`. Can be `raw.githubusercontent.com` for a file inside a git repo, or a static host. One GET per file (cap 6 parallel `SemaphoreSlim(6)`). |
-| Install path | `path` | string | yes | **Relative** POSIX-ish path, no `..`, no absolute (`Path.IsPathRooted` rejected). Extension determines routing but **explicit** `type` decides destination: `Script` → `ScriptDestinationFullPath/Source/...`, others → `ContentDestinationFullPath/Content/...`. The path is appended under `<dest>/<sanitized(sourceId)>/<sanitized(packId)>/files/<path>` preserving subfolders. A leading segment that equals the pack folder (sanitized, matching the install folder name) is **stripped** at fetch time, so manifests that embed the pack folder (e.g. `"path": "foo-asset/diff.png"` for pack id `foo-asset`) resolve to the same layout as pack-root-relative ones (`"diff.png"`) — never a doubled `foo-asset/foo-asset/`. |
+| Install path | `path` | string | yes | **Relative** POSIX-ish path, no `..`, no absolute (`Path.IsPathRooted` rejected). Extension determines routing but **explicit** `type` decides destination: `Script` → `ScriptDestinationFullPath/Source/...`, others → `ContentDestinationFullPath/Content/...`. The path is appended under `<dest>/<sanitized(sourceId)>/<sanitized(packId)>/files/<path>` preserving subfolders; with a variant selected it is appended under `…/files/<sanitized(variantId)>/<path>` (§5.3). A leading segment that equals the pack folder (sanitized, matching the install folder name) is **stripped** at fetch time, so manifests that embed the pack folder (e.g. `"path": "foo-asset/diff.png"` for pack id `foo-asset`) resolve to the same layout as pack-root-relative ones (`"diff.png"`) — never a doubled `foo-asset/foo-asset/`. |
 | Asset type | `type` | enum string | yes | Exhaustive: `Texture`, `Material`, `MaterialNode`, `Model`, `Prefab`, `Script`, `AnimGraph`, `Audio`, `Shader`, `MaterialTextures`. `MaterialTextures` marks an image as a material-bound texture set: its PBR role (BaseColor/Normal/Metallic/Roughness/AO/Emissive/Height/Opacity) is auto-detected from the file name, and the *Install and create material* action uses these files to build a PBR material. Unknown value → deserialization/fetch error (`type` must be a *name*: numeric strings such as `"5"` are rejected, never mapped onto the enum member with that value). No `Other` — every raw file must be typed. |
 | Checksum | `sha256` | string | no | Lowercase hex SHA-256 of the bytes; computed via `SHA256.Create()` and compared before write. On mismatch install fails for that pack (no partial entry). |
 
@@ -132,11 +132,11 @@ Note: shader source lives as content, not under `Source/`, to respect `ContentFo
 
 | Field | Key | Type | Req | Rules |
 |-------|-----|------|-----|-------|
-| Variant id | `id` | string | yes | Required, unique within the pack (case-sensitive ordinal compare). Machine key used for selection persistence (`Settings.json` `selectedVariants`) and for the installed record (`.installed.json` `variant`). |
+| Variant id | `id` | string | yes | Required, unique within the pack (case-sensitive ordinal compare). Machine key used for selection persistence (`Settings.json` `selectedVariants`) and for the installed record (`.installed.json` `variant`). It also names the **folder** the variant's files install into (`…/<pack>/files/<id>/…`), so it is run through `Sanitize` like any derived folder name: two ids that sanitize to one name share one folder (and the install never prunes that folder), and an id that sanitizes to a name a base `files[].path` prefix already uses shares that folder — keep ids short and folder-safe (`1k`, `2k`, `4k`). |
 | Display label | `name` | string | yes | Shown in the detail panel's Variant dropdown. |
 | Variant files | `files` | `FileEntry[]` | yes | Non-empty. Every rule in §5.1 applies verbatim (the same `ValidateFiles` check runs on them; errors are reported as `variant '<id>' <rule>`), including pack-prefix stripping. |
 
-**Default set rule:** `files[]` is optional when `variants[]` is present. If base `files[]` is non-empty, it is the *default* file set (the dropdown's `Default` item); installing with no variant selected writes it. If `files[]` is absent, the **first variant** (declaration order) is the default — an install with no explicit selection writes the first variant's files. An `assetPack` needs non-empty `files[]` **or** non-empty `variants[]`; having neither ⇒ `(error)`. `pluginProject` packs must not have `variants[]`.
+**Default set rule:** `files[]` is optional when `variants[]` is present. If base `files[]` is non-empty, it is the *default* file set (the dropdown's `Default` item); installing with no variant selected writes it, flat under `files/`. If `files[]` is absent, the **first variant** (declaration order) is the default — an install with no explicit selection writes the first variant's files, into that variant's own subfolder `files/<id>/`. An `assetPack` needs non-empty `files[]` **or** non-empty `variants[]`; having neither ⇒ `(error)`. `pluginProject` packs must not have `variants[]`.
 
 ---
 
@@ -379,7 +379,7 @@ File rules:
 }
 ```
 
-Base `files[]` (8k) is the default set; the detail panel shows a Variant dropdown with `Default, 1K, 4K`. Selecting `1K` and installing writes the `1k` files and records `"variant": "1k"` in `.installed.json`.
+Base `files[]` (8k) is the default set; the detail panel shows a Variant dropdown with `Default, 1K, 4K`. Selecting `1K` and installing writes the `1k` files under `files/1k/` and records `"variant": "1k"` in `.installed.json`, removing the set installed before it (§12).
 
 ### 11.9 Variants-only AssetPack (no base files)
 
@@ -399,7 +399,7 @@ Base `files[]` (8k) is the default set; the detail panel shows a Variant dropdow
 }
 ```
 
-No `files[]` — allowed because `variants[]` is non-empty (the conditional-`files` rule, §5.3). The first variant `1k` is the default; the dropdown lists only `1K, 4K` (no `Default`), and a plain install writes the `1k` files with `"variant": "1k"` recorded.
+No `files[]` — allowed because `variants[]` is non-empty (the conditional-`files` rule, §5.3). The first variant `1k` is the default; the dropdown lists only `1K, 4K` (no `Default`), and a plain install writes the `1k` files under `files/1k/` with `"variant": "1k"` recorded. Picking `4K` and installing writes `files/4k/` and removes `files/1k/`, so the Content tree never holds two resolutions of the same pack (§12).
 
 
 ### 11.10 ArchivePack — minimal
@@ -434,10 +434,12 @@ Downloads `box_pack.zip`, extracts its contents into `Content/FlaxAssetManager/c
 
 | `type` | `Settings` key | Full path pattern (`Globals.ProjectFolder` prefix) |
 |--------|----------------|----------------------------------------------------|
-| `Script` | `scriptDestination` (`Source/FlaxAssetManager`) | `<project>/Source/FlaxAssetManager/<sanitized(sourceId)>/<sanitized(packId)>/files/<file.path>` |
-| All others | `contentDestination` (`Content/FlaxAssetManager`) | `<project>/Content/FlaxAssetManager/<sanitized(sourceId)>/<sanitized(packId)>/files/<file.path>` |
+| `Script` | `scriptDestination` (`Source/FlaxAssetManager`) | `<project>/Source/FlaxAssetManager/<sanitized(sourceId)>/<sanitized(packId)>/files/[<sanitized(variantId)>/]<file.path>` |
+| All others | `contentDestination` (`Content/FlaxAssetManager`) | `<project>/Content/FlaxAssetManager/<sanitized(sourceId)>/<sanitized(packId)>/files/[<sanitized(variantId)>/]<file.path>` |
 
-Downloaded files live under a `files/` subfolder of the pack folder. Pack-*generated* assets are excluded: the `.flax` material created by *Install and create material* stays at `<contentDestination>/<sourceId>/<packId>/M_<packId>.flax` (no `files/`), and imported model sources register their `.flax` asset in the pack root too.
+Downloaded files live under a `files/` subfolder of the pack folder. When the install selected a **variant** they live one level deeper, in `files/<sanitized(variantId)>/`, so each file set a pack offers (1k / 2k / 4k / 8k texture resolutions, tiered model sets, any other tier) keeps its files — and the `.flax` assets imported from them — on their own instead of sharing one flat folder whose identical names overwrite each other. The default file set (a pack with no `variants[]`, or the base `files[]` = the dropdown's `Default`) installs flat, with no variant segment, exactly as before. Because a variant switch writes paths the previous set does not share, the install **replaces** it: once the new files are on disk, the replaced record's files, their `.flax` sidecars and derived-data folders, the model asset the removed tier imported into the pack root (matched only against that record's own model sources — the generated material is left for the material pipeline to rebuild), and the folders of the pack's other declared variants are deleted (in both destinations), and the replaced record's `generatedAssets` carry over into the new record so uninstall still knows what to delete. `AssetInstallerService.VariantSubFolder` is the single authority for this layout and `MaterialCreatorService` resolves installed textures through the same rule; folders emptied by those deletes are pruned up to, and never past, the pack root.
+
+Pack-*generated* assets are excluded from `files/` in both layouts: the `.flax` material created by *Install and create material* stays at `<contentDestination>/<sourceId>/<packId>/M_<packId>.flax`, and imported model sources register their `.flax` asset in the pack root too — so a variant switch keeps the pack's material and models where they are and rebuilds them from the newly selected set.
 
 `Sanitize` replaces invalid filename chars and `/\..` with `_`. Traversal guard `Path.GetFullPath(combined).StartsWith(rootFull)` enforced in `AssetInstallerService.ResolveAssetPackPath`.
 

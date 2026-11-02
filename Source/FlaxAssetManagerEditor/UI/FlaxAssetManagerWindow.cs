@@ -1604,6 +1604,19 @@ namespace FlaxAssetManager.UI
                 }
                 _detailsStatus.Text = (hasUpdate ? $"Installed v{installed.InstalledVersion}  →  Update to v{pack.Version} available." : $"Installed v{installed.InstalledVersion}  at  {installed.InstallPath}") + (variantSuffix ?? "");
                 _detailsStatus.TextColor = hasUpdate ? Theme.Progress : Theme.Fg;
+
+                // Switching variant on an installed pack is not a no-op: the selected set is written into
+                // its own subfolder of files/, and installing removes the set installed before it. Say which
+                // is which, because the line above describes the *installed* variant, not the selection.
+                var selectedVariant = GetSelectedVariantId();
+                if (!string.Equals(selectedVariant ?? string.Empty, installed.Variant ?? string.Empty, StringComparison.Ordinal))
+                {
+                    string Label(string vid) => string.IsNullOrEmpty(vid)
+                        ? "default"
+                        : pack.Variants?.Find(x => string.Equals(x.Id, vid, StringComparison.Ordinal))?.Name ?? vid;
+                    _detailsStatus.Text += $"  Selected variant: {Label(selectedVariant)} (installed: {Label(installed.Variant)}) — installing replaces the installed set.";
+                    _detailsStatus.TextColor = Theme.Progress;
+                }
             }
             else
             {
@@ -1710,9 +1723,15 @@ namespace FlaxAssetManager.UI
                 if (files.Count > 18)
                     sb.AppendLine($"  … and {files.Count - 18} more");
                 sb.AppendLine();
+                // The install target names the folder the selected variant's files land in, so the path the
+                // panel shows is the path the installer writes, and switching variant visibly moves it.
+                var variantSub = AssetInstallerService.VariantSubFolder(GetSelectedVariantId());
+                var filesFolder = AssetInstallerService.FilesSubFolder + (variantSub.Length > 0 ? "/" + variantSub : "/");
                 sb.AppendLine($"Installs to:  Source/… or Content/… under");
-                sb.AppendLine($"  {_settings.Settings.ScriptDestination}/<source>/<pack>/files/  (Scripts)");
-                sb.AppendLine($"  {_settings.Settings.ContentDestination}/<source>/<pack>/files/  (assets)");
+                sb.AppendLine($"  {_settings.Settings.ScriptDestination}/<source>/<pack>/{filesFolder}  (Scripts)");
+                sb.AppendLine($"  {_settings.Settings.ContentDestination}/<source>/<pack>/{filesFolder}  (assets)");
+                if (variantSub.Length > 0)
+                    sb.AppendLine($"  Variant sets keep their own subfolder of {AssetInstallerService.FilesSubFolder}/: installing this one removes the files of the variant installed before it.");
             }
             else if (pack.PackType == PackType.PluginProject && pack.Distribution != null)
             {

@@ -105,7 +105,9 @@ chains, UV parameters).
 becomes the source entry.
 
 **Browse** — search by name, description, category, file path, or file type; filter by type;
-pick a **variant** (e.g. `2K` / `8K` / `256px`) in the detail panel when a pack offers tiers.
+pick a **variant** (e.g. `2K` / `8K` / `256px`) in the detail panel when a pack offers tiers — each
+variant installs into its own `files/<variant>/` subfolder, and the panel shows the exact folder the
+current selection writes to.
 
 **Install a pack** — select it, press **Install**. Progress shows per file; the install record
 drives the **Update available** badge on later refreshes, and the same record decides the button's
@@ -175,8 +177,10 @@ Configurable in `Content/FlaxAssetManager/Settings.json`:
 ```
 
 Files land in `<contentDestination>/<sourceId>/<packId>/files/<path>` (scripts in
-`<scriptDestination>/…`); imported `.flax` models and the generated material land in the pack
-root.
+`<scriptDestination>/…`); picking a **variant** puts them one level deeper, in `files/<variant>/<path>`,
+so a pack's 1K / 2K / 4K / 8K sets each keep their own folder, and installing one removes the files — and
+the imported model asset — of the variant installed before it. Imported `.flax` models and the generated
+material land in the pack root.
 
 > `overwriteExisting` (default `false`) keeps existing files: with it `false`, a file that is
 > already on disk is not downloaded, not overwritten and not re-imported, and is reported as

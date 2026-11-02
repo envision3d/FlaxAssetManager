@@ -35,6 +35,17 @@ namespace FlaxAssetManager.Core.Services
         public const string FilesSubFolder = "files";
 
         /// <summary>
+        /// Subfolder of <see cref="FilesSubFolder"/> that a variant's downloads land in — <c>files/2k/</c>
+        /// for a variant whose id is <c>2k</c> — so each file set a pack offers (1k / 2k / 4k / 8k texture
+        /// resolutions and any other tier) keeps its files, and its imported <c>.flax</c> sidecars, on its
+        /// own instead of sharing one flat folder whose identical names overwrite each other. Returns
+        /// <see cref="string.Empty"/> for the default file set (a pack with no <c>variants[]</c>, or the base
+        /// <c>files[]</c> selected), which keeps that layout exactly as it was. The id is manifest data, so it
+        /// is run through <see cref="Sanitize"/> like every other folder name this service derives.
+        /// </summary>
+        public static string VariantSubFolder(string variantId) => string.IsNullOrEmpty(variantId) ? string.Empty : Sanitize(variantId);
+
+        /// <summary>
         /// Extensions the editor's content pipeline turns into a .flax asset beside the source file
         /// ('Rock.tga' yields 'Rock.tga.flax' plus a 'Rock.tga/' derived-data folder). Uninstall derives
         /// those sidecars from the recorded downloads, so removing a pack also removes the assets it
@@ -88,6 +99,12 @@ namespace FlaxAssetManager.Core.Services
                 Debug.LogWarning($"FlaxAssetManager: variant '{variantId}' is not declared by pack '{pack.Id}'; installing the default file set.");
             }
 
+            // The record this install replaces, read **before** anything is written: a variant switch
+            // writes its set under files/<variant>/, so none of the previously installed paths are
+            // overwritten and the old set would simply stay in the Content tree. Its file list is
+            // exactly what has to go (see RemoveReplacedInstall).
+            var replaced = _settings.FindInstalled(sourceId, pack.Id);
+
             int total = files.Count;
             int done = 0;
             int skipped = 0;
@@ -104,7 +121,7 @@ namespace FlaxAssetManager.Core.Services
                 {
                     try
                     {
-                        var destPath = ResolveAssetPackPath(file, pack, sourceId);
+                        var destPath = ResolveAssetPackPath(file, pack, sourceId, variantId);
                         var dir = Path.GetDirectoryName(destPath);
                         Directory.CreateDirectory(dir);
 
@@ -151,6 +168,12 @@ namespace FlaxAssetManager.Core.Services
                 return false;
             }
 
+            // Every file of the new set is on disk, so it is now safe to drop the set this install
+            // replaces: its recorded files, the imported .flax sidecars beside them, and the folders of
+            // the pack's other variants. One pack keeps one variant on disk - a leftover 1k set beside a
+            // 4k one is duplicate textures, and the graph can wire the tier that was just switched away from.
+            RemoveReplacedInstall(replaced, sourceId, pack, variantId, installedFiles);
+
             // Trigger the editor's import pipeline for every model in the pack so the raw
             // .fbx/.obj/.blend sources become loadable Flax assets. The generated .flax assets
             // land in the pack root, one level above files/, next to the created material.
@@ -161,7 +184,7 @@ namespace FlaxAssetManager.Core.Services
             foreach (var file in files)
             {
                 if (file.Type != FileAssetType.Model) continue;
-                var full = ResolveAssetPackPath(file, pack, sourceId);
+                var full = ResolveAssetPackPath(file, pack, sourceId, variantId);
                 if (!File.Exists(full)) continue;
                 models.Add(full);
             }
@@ -177,10 +200,12 @@ namespace FlaxAssetManager.Core.Services
                 Debug.LogWarning($"FlaxAssetManager: model import cancelled for pack '{pack.Id}'; files remain installed.");
             }
 
-            // Record install
-            var existing = _settings.FindInstalled(sourceId, pack.Id);
-            if (existing != null)
-                _settings.Installed.Installed.Remove(existing);
+            // Record install. The record this install replaces is dropped, and the assets that install
+            // *generated* carry over: the imported models and the created material live in the pack root,
+            // shared by every variant and absent from the file list, and re-importing a model whose
+            // .flax is already on disk produces nothing new - a fresh list would silently orphan them.
+            if (replaced != null)
+                _settings.Installed.Installed.Remove(replaced);
             _settings.Installed.Installed.Add(new InstalledEntry
             {
                 SourceId = sourceId,
@@ -194,7 +219,7 @@ namespace FlaxAssetManager.Core.Services
                 DistributionUrl = null,
                 InstallPath = Path.Combine(_settings.Settings.ContentDestination, Sanitize(sourceId), Sanitize(pack.Id)),
                 Files = installedFiles,
-                GeneratedAssets = generatedAssets,
+                GeneratedAssets = MergeGeneratedAssets(replaced?.GeneratedAssets, generatedAssets),
             });
             _settings.SaveInstalled();
             if (skipped > 0)
@@ -581,15 +606,17 @@ namespace FlaxAssetManager.Core.Services
             return null;
         }
 
-        private string ResolveAssetPackPath(FileEntry file, PackEntry pack, string sourceId)
+        private string ResolveAssetPackPath(FileEntry file, PackEntry pack, string sourceId, string variantId)
         {
             // Script -> scriptDestination, others -> contentDestination
             bool isScript = file.Type == FileAssetType.Script;
             var root = isScript ? _settings.ScriptDestinationFullPath : _settings.ContentDestinationFullPath;
             var safeSource = Sanitize(sourceId);
             var safePack = Sanitize(pack.Id);
-            // file.Path is relative like "Textures/Brick/brick.png" — preserve verbatim under source/pack/files
-            var combined = Path.Combine(root, safeSource, safePack, FilesSubFolder, file.Path);
+            // file.Path is relative like "Textures/Brick/brick.png" — preserve verbatim under
+            // source/pack/files[/variant]. The variant segment is what keeps a pack's 1k/2k/4k sets apart
+            // on disk; it is empty for the default file set, so a pack without variants is laid out as before.
+            var combined = Path.Combine(root, safeSource, safePack, FilesSubFolder, VariantSubFolder(variantId), file.Path);
             // Normalize: remove any .. attempts already validated, but also ensure inside root
             var full = Path.GetFullPath(combined);
             var rootFull = Path.GetFullPath(root) + Path.DirectorySeparatorChar;
@@ -597,6 +624,254 @@ namespace FlaxAssetManager.Core.Services
                 throw new Exception($"Path traversal detected: {file.Path}");
             return full;
         }
+
+        /// <summary>
+        /// Deletes what the install record being replaced left in the project: every recorded file that the
+        /// new install does not write itself, plus the <c>.flax</c> asset and the derived-data folder the
+        /// editor created beside each imported source file, then prunes the folders that become empty.
+        /// <para>
+        /// A variant switch is where this matters: the new set lands under <c>files/&lt;variant&gt;/</c>, so it
+        /// shares no path with the set installed before and nothing is overwritten. Without this pass the
+        /// old set — and the assets imported from it — stay in the Content tree: one pack showing two
+        /// resolutions at once, and the material rebuilt for the newly selected variant can wire textures
+        /// of the tier the user just switched away from. The same pass cleans a pre-variant install (whose
+        /// files landed flat in <c>files/</c>) that is being reinstalled as a variant, because its paths are
+        /// recorded too.
+        /// </para>
+        /// <para>
+        /// A model imports into the pack root and is named after its source base name, so the model of the
+        /// removed tier ('set_1k.fbx' → 'set_1k.flax') is dropped as well, matched only against that record's
+        /// own model sources. The pack's generated material is left alone: the material pipeline rebuilds it.
+        /// </para>
+        /// <para>
+        /// Paths come from the record and pass the same project-containment gate as an uninstall delete; a
+        /// path that fails it is logged and skipped, never deleted.
+        /// </para>
+        /// </summary>
+        private void RemoveReplacedInstall(InstalledEntry replaced, string sourceId, PackEntry pack, string variantId, IList<string> keep)
+        {
+            PruneStaleVariantFolders(sourceId, pack, variantId);
+            if (replaced?.Files == null || replaced.Files.Count == 0)
+                return;
+
+            var projectRootFull = Path.GetFullPath(Globals.ProjectFolder) + Path.DirectorySeparatorChar;
+            var keepSet = new HashSet<string>((keep ?? new List<string>()).Select(NormalizeRel), StringComparer.Ordinal);
+            int removed = 0;
+            foreach (var rel in replaced.Files)
+            {
+                var normalized = NormalizeRel(rel);
+                if (normalized.Length == 0 || keepSet.Contains(normalized))
+                    continue;   // this install writes that exact path, so its file stays as it is
+                var full = Path.GetFullPath(Path.Combine(Globals.ProjectFolder, normalized));
+                if (!GitSafety.IsUnderRoot(full, projectRootFull))
+                {
+                    Debug.LogError($"FlaxAssetManager: refusing to delete '{rel}' - it resolves outside the project folder");
+                    continue;
+                }
+                try
+                {
+                    if (File.Exists(full))
+                    {
+                        File.Delete(full);
+                        removed++;
+                    }
+                    // The import pipeline writes the asset beside its source, plus a folder of derived
+                    // data ('brick.png' → 'brick.png.flax' and 'brick.png/'), so dropping only the source
+                    // leaves the previous variant half-installed and its asset still in the browser.
+                    var sidecar = full + ".flax";
+                    if (File.Exists(sidecar))
+                    {
+                        File.Delete(sidecar);
+                        removed++;
+                    }
+                    var sidecarDir = full + Path.DirectorySeparatorChar;
+                    if (Directory.Exists(sidecarDir))
+                    {
+                        Directory.Delete(sidecarDir, true);
+                        removed++;
+                    }
+                    PruneEmptyFolders(Path.GetDirectoryName(full), PackRootOfRecordedFile(full));
+                }
+                catch (Exception e)
+                {
+                    // A file the editor has locked must not fail an install that already succeeded: name
+                    // what stayed behind and carry on with the rest.
+                    Debug.LogWarning($"FlaxAssetManager: could not remove '{rel}' left by the replaced install: {e.Message}");
+                }
+            }
+
+            // A model imports into the pack root and the engine names the asset after the source base name,
+            // so a tier whose source is gone leaves its model behind: 'set_1k.fbx' and 'set_4k.fbx' produce
+            // 'set_1k.flax' and 'set_4k.flax' side by side in the Content browser. Drop the assets of exactly
+            // the models this install removed - named from that record's own model sources - and leave every
+            // other generated asset alone: the pack's material is rebuilt by the material pipeline, not here.
+            var staleModelNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rel in replaced.Files)
+            {
+                var normalized = NormalizeRel(rel);
+                if (normalized.Length == 0 || keepSet.Contains(normalized))
+                    continue;
+                if (Array.IndexOf(ModelExtensions, Path.GetExtension(normalized).ToLowerInvariant()) < 0)
+                    continue;
+                staleModelNames.Add(Path.GetFileNameWithoutExtension(normalized));
+            }
+            foreach (var rel in replaced.GeneratedAssets ?? Enumerable.Empty<string>())
+            {
+                var normalized = NormalizeRel(rel);
+                if (normalized.Length == 0 || !staleModelNames.Contains(Path.GetFileNameWithoutExtension(normalized)))
+                    continue;
+                var full = Path.GetFullPath(Path.Combine(Globals.ProjectFolder, normalized));
+                if (!GitSafety.IsUnderRoot(full, projectRootFull))
+                {
+                    Debug.LogError($"FlaxAssetManager: refusing to delete '{rel}' - it resolves outside the project folder");
+                    continue;
+                }
+                try
+                {
+                    if (File.Exists(full))
+                    {
+                        File.Delete(full);
+                        removed++;
+                    }
+                    var assetDir = full + Path.DirectorySeparatorChar;
+                    if (Directory.Exists(assetDir))
+                    {
+                        Directory.Delete(assetDir, true);
+                        removed++;
+                    }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"FlaxAssetManager: could not remove the model asset '{rel}' left by the replaced install: {e.Message}");
+                }
+            }
+            if (removed > 0)
+                Debug.Log($"FlaxAssetManager: removed {removed} file(s) left by the replaced install of pack '{pack.Id}' (variant '{replaced.Variant ?? "default"}').");
+        }
+
+        /// <summary>
+        /// Removes the folders of the pack's <b>other</b> variants — for a default-set install, of every
+        /// declared variant — under both the content and the script destination. Those folders exist only
+        /// because this installer made them, and their names come from the pack's own declared variant ids,
+        /// so nothing a user or a manifest put in <c>files/</c> is touched and the installed variant's own
+        /// folder is never pruned.
+        /// </summary>
+        private void PruneStaleVariantFolders(string sourceId, PackEntry pack, string variantId)
+        {
+            if (pack?.Variants == null || pack.Variants.Count == 0)
+                return;
+
+            var keep = VariantSubFolder(variantId);
+            var projectRootFull = Path.GetFullPath(Globals.ProjectFolder) + Path.DirectorySeparatorChar;
+            foreach (var v in pack.Variants)
+            {
+                var sub = VariantSubFolder(v.Id);
+                // Two variant ids can sanitize to one folder name; pruning it while installing the other
+                // would delete the files this install is writing.
+                if (sub.Length == 0 || string.Equals(sub, keep, PathComparison))
+                    continue;
+                foreach (var root in new[] { _settings.ContentDestinationFullPath, _settings.ScriptDestinationFullPath })
+                {
+                    var dir = Path.GetFullPath(Path.Combine(root, Sanitize(sourceId), Sanitize(pack.Id), FilesSubFolder, sub));
+                    if (!GitSafety.IsUnderRoot(dir, projectRootFull) || !Directory.Exists(dir))
+                        continue;
+                    try
+                    {
+                        Directory.Delete(dir, true);
+                        Debug.Log($"FlaxAssetManager: removed variant folder '{sub}' of pack '{pack.Id}' - it is not the installed variant.");
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning($"FlaxAssetManager: could not remove the variant folder '{dir}': {e.Message}");
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Deletes <paramref name="startDir"/> and then each of its ancestors while it is empty, stopping at
+        /// <paramref name="stopDir"/>, at the project boundary, and at the first folder that still holds
+        /// anything. A variant set nested as <c>files/2k/Textures/</c> leaves its whole chain behind when its
+        /// files are deleted, so pruning one fixed level (what uninstall used to do) left empty variant
+        /// folders in the Content tree. The pack root is the stop point: it is shared with the other variant
+        /// folders and with the assets an install generates, and <see cref="TryDeleteEmptyPackFolder"/> owns it.
+        /// </summary>
+        private static void PruneEmptyFolders(string startDir, string stopDir)
+        {
+            var sep = Path.DirectorySeparatorChar;
+            var projectRoot = Path.GetFullPath(Globals.ProjectFolder);
+            var stop = string.IsNullOrEmpty(stopDir) ? projectRoot : Path.GetFullPath(stopDir).TrimEnd(sep);
+            if (string.IsNullOrEmpty(startDir))
+                return;
+
+            var current = Path.GetFullPath(startDir).TrimEnd(sep);
+            while (!string.IsNullOrEmpty(current))
+            {
+                if (string.Equals(current, stop, PathComparison) || string.Equals(current, projectRoot, PathComparison))
+                    break;
+                if (!GitSafety.IsUnderRoot(current + sep, projectRoot + sep))
+                    break;
+                try
+                {
+                    if (!Directory.Exists(current) || Directory.EnumerateFiles(current).Any() || Directory.EnumerateDirectories(current).Any())
+                        break;
+                    Directory.Delete(current);
+                }
+                catch (Exception e)
+                {
+                    // A folder the editor still holds open is not an error: the files are gone, and the next
+                    // refresh has nowhere left to prune. Stop walking up rather than fight it.
+                    Debug.LogWarning($"FlaxAssetManager: kept the folder '{current}': {e.Message}");
+                    break;
+                }
+                current = Path.GetDirectoryName(current);
+            }
+        }
+
+        /// <summary>
+        /// The pack folder that owns a recorded file: the parent of the <c>files/</c> segment in its path,
+        /// which is where <see cref="PruneEmptyFolders"/> stops. Falls back to the project root — a no-op
+        /// boundary — for a recorded path with no <c>files/</c> segment (a plugin clone, an older record).
+        /// </summary>
+        private static string PackRootOfRecordedFile(string fileFull)
+        {
+            var sep = Path.DirectorySeparatorChar;
+            var projectRoot = Path.GetFullPath(Globals.ProjectFolder);
+            var dir = Path.GetDirectoryName(fileFull);
+            while (!string.IsNullOrEmpty(dir) && GitSafety.IsUnderRoot(dir + sep, projectRoot + sep))
+            {
+                if (string.Equals(Path.GetFileName(dir), FilesSubFolder, PathComparison))
+                {
+                    var packRoot = Path.GetDirectoryName(dir);
+                    if (!string.IsNullOrEmpty(packRoot))
+                        return packRoot;
+                    break;
+                }
+                dir = Path.GetDirectoryName(dir);
+            }
+            return projectRoot;
+        }
+
+        /// <summary>
+        /// The install record's generated-asset list: what the replaced install produced, plus what this one
+        /// produced, deduplicated. A variant switch does not regenerate the pack root's imported models, so
+        /// without carrying the old list over, uninstall would leave assets it no longer knows about (and a
+        /// rebuilt material, recorded again by the material service, is the deduplicated case).
+        /// </summary>
+        private static List<string> MergeGeneratedAssets(IEnumerable<string> previous, IEnumerable<string> current)
+        {
+            var merged = new List<string>();
+            foreach (var list in new[] { previous, current })
+            {
+                foreach (var asset in list ?? Enumerable.Empty<string>())
+                    if (!string.IsNullOrWhiteSpace(asset) && !merged.Contains(asset, StringComparer.OrdinalIgnoreCase))
+                        merged.Add(asset);
+            }
+            return merged;
+        }
+
+        /// <summary>Recorded paths as stored in <c>.installed.json</c>: project-relative, forward slashes.</summary>
+        private static string NormalizeRel(string p) => (p ?? string.Empty).Trim().Replace('\\', '/');
 
         /// <summary>
         /// Model source extensions recognized when scanning extracted archive packs.
@@ -1063,19 +1338,12 @@ namespace FlaxAssetManager.Core.Services
                         if (File.Exists(fullPath))
                         {
                             await Task.Run(() => File.Delete(fullPath), ct);
-                            // Remove empty parent directories up to the source/pack root
-                            var parent = Path.GetDirectoryName(fullPath);
-                            if (!string.IsNullOrEmpty(parent) && !Directory.EnumerateFiles(parent).Any())
-                            {
-                                Directory.Delete(parent);
-                                // Walk up one more level (the files/ level); only removed when fully empty, so the pack root (and any generated material) is kept.
-                                var grandparent = Path.GetDirectoryName(parent);
-                                if (!string.IsNullOrEmpty(grandparent) && !Directory.EnumerateFiles(grandparent).Any() &&
-                                    !Directory.EnumerateDirectories(grandparent).Any())
-                                {
-                                    Directory.Delete(grandparent);
-                                }
-                            }
+                            // Prune every folder this delete emptied, walking up to the pack root: a
+                            // variant set nested as files/2k/Textures/ leaves its whole chain behind, so the
+                            // old fixed two-level prune left empty variant folders in the Content tree. The
+                            // pack root itself is kept (it holds the generated material), and
+                            // TryDeleteEmptyPackFolder below removes it when the pack is fully gone.
+                            PruneEmptyFolders(Path.GetDirectoryName(fullPath), PackRootOfRecordedFile(fullPath));
                         }
                         var cur = Interlocked.Increment(ref done);
                         Report(progress, 0.2f + 0.5f * (float)cur / total, $"Removed {cur}/{total} files");
