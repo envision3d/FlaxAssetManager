@@ -6,7 +6,7 @@
 
 ## What This Is
 
-FlaxEngine **plugin project** at `Plugins/FlaxAssetManager/` inside any Flax game project (host-agnostic). Adds an **editor window** (`Window → Flax Asset Manager`) that lets users browse/install:
+FlaxEngine **plugin project** at `Plugins/FlaxAssetManager/` inside any Flax game project (host-agnostic). Adds an **editor window** (`Tools → Flax Asset Manager`) that lets users browse/install:
 
 - **Plugin projects** — full Flax plugin projects as git repos → plain `git clone` → `Plugins/<Name>/` + `.flaxproj` reference injection.
 - **Raw asset packs** — explicit `files[]` lists of raw assets (Texture, Material, Model, etc.) behind plain `https://` URLs (including `raw.githubusercontent.com` for files inside repos) → parallel download → `Content/` or `Source/`.
@@ -21,7 +21,7 @@ Housing: this folder is the plugin project itself. When installed, it lives at `
 FlaxAssetManager.flaxproj                          # GameTarget FlaxAssetManagerTarget, EditorTarget FlaxAssetManagerEditorTarget
 Source/FlaxAssetManager/FlaxAssetManager.cs        # GamePlugin sets _description in ctor (Plugin.h:22) — do NOT add override Description
 Source/FlaxAssetManager/FlaxAssetManager.Build.cs  # GameModule BuildNativeCode=false + using Flax.Build.NativeCpp
-Source/FlaxAssetManagerEditor/FlaxAssetManagerEditor.cs  # EditorPlugin GamePluginType => FlaxAssetManager, builds services + window + Window menu
+Source/FlaxAssetManagerEditor/FlaxAssetManagerEditor.cs  # EditorPlugin GamePluginType => FlaxAssetManager, builds services + window + Tools menu entry (with a separator, deduped across hot-reloads)
 Source/FlaxAssetManagerEditor/FlaxAssetManagerEditor.Build.cs # GameEditorModule + PublicDependencies.Add("FlaxAssetManager")
 Source/FlaxAssetManagerTarget.Build.cs             # GameProjectTarget
 Source/FlaxAssetManagerEditorTarget.Build.cs       # GameProjectEditorTarget
@@ -339,6 +339,6 @@ No native code (`BuildNativeCode=false` both modules); pure C#; Newtonsoft.Json 
 - Runnable manifest with every type: `docs/example_manifest.json:1` (13 packs, Counter shows all 9 types)
 - Exhaustive manifest permutations, error catalog, kitchen-sink examples: `docs/MANIFEST_SPEC.md:1`
 - Open decisions (material ownership, licensing, thread-affinity refactor, publishing, …): `docs/DECISIONS.md:1`
-- Engine refs: `Flax.Build/ProjectInfo.cs:214` (macros), `ContentFolder.cs:27` (Content vs Source), `UIModule.cs:775` (Window menu), `PluginsWindow.cs:388` (clone pattern).
+- Engine refs: `Flax.Build/ProjectInfo.cs:214` (macros), `ContentFolder.cs:27` (Content vs Source), `UIModule.cs:741` (Tools menu — where this plugin puts its entry; `MenuTools.ContextMenu`), `PluginsWindow.cs:388` (clone pattern).
 
 Iterate here — keep the three layers clean and the validator strict.

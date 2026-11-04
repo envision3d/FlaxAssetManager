@@ -44,7 +44,7 @@ body:
     id: validation
     attributes:
       label: What the plugin said
-      description: The log line from Window -> Flax Asset Manager -> Refresh, and what appeared in the list.
+      description: The log line from Tools -> Flax Asset Manager -> Refresh, and what appeared in the list.
       render: text
   - type: textarea
     id: license

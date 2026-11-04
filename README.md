@@ -59,7 +59,7 @@ In the Flax editor: **Tools → Plugins → Clone Project**, and in the popup fi
 Press **Clone**. The editor clones into `Plugins/FlaxAssetManager`, adds the plugin's `.flaxproj` to
 your project's `References` itself, and reports *“FlaxAssetManager has been successfully cloned.
 Restart editor for changes to take effect.”* Restart the editor, then open
-**Window → Flax Asset Manager**.
+**Tools → Flax Asset Manager**.
 
 Notes on that flow (it is the engine's own [Plugins window](https://docs.flaxengine.com/manual/scripting/plugins/plugins-window.html)):
 

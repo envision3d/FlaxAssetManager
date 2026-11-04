@@ -120,6 +120,37 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
   hung `git pull` cannot land files after the operation has been reported over (D16).
 
 ### Changed
+* **The window opens from `Tools`, not `Window`.** `Window → Flax Asset Manager` put a plugin entry among
+  the engine's own window list, which is about the editor's layout (Content, Scene, Toolbox, layouts …);
+  the manager is a tool that installs content, and `Tools` is where Flax puts the engine's own work
+  windows (Game Cooker, Profiler, Plugins) beside its build actions. `FlaxAssetManagerEditor` now adds
+  the button to `Editor.UI.MenuTools.ContextMenu`, behind a separator so it reads as the plugin's own
+  section rather than as more engine items. The separator is a second item to own, so the hot-reload
+  cleanup grew: the button is still found by text (a script reload drops the reference, so text is the
+  only handle), the separator is tracked by reference, and a pass collapses any separator sitting
+  directly on top of another, which is what a reload that added one leaves behind. That pass runs
+  backwards over a snapshot of `menu.Items` — the engine exposes `Items` as `IEnumerable`, not an index —
+  so disposing an item never shifts an index still to visit, and it converges: each reload adds one
+  separator, the cleanup removes one. Deinitialize removes both entries. The window's `Title`, the
+  docking behaviour, and `ShowWindow()` are unchanged; the docs, README install step, AGENTS file map and
+  both issue templates follow the new location. Moving the entry is not free space: `ContextMenu`
+  shows at most `MaximumItemsInViewCount` items (engine default 20) and scrolls the rest, and the
+  engine builds its own Tools menu at **exactly** 20 — separator plus button landed as items 21 and
+  22, so the first release of this change opened Tools with a scroll bar. The plugin now raises that
+  cap to the menu's item count (so it never scrolls, and never needs to know how many items the
+  engine ships), remembering the value it replaced and handing it back on unload; the raise is
+  idempotent, since a hot-reload re-adds the same two items to a cap already at that count.
+  **Tested:** compiles clean through `Flax.Build` on the
+  host project (`FlaxAssetManagerEditor.CSharp.dll` compiled, 0 warnings) and against the stock 1.13
+  editor assembly via `compat/` with `-warnaserror` — which is the real check here, that `MenuTools`,
+  `ContextMenuSeparator` and `MaximumItemsInViewCount` are public stock API and not a local engine
+  addition. The 20-item Tools menu is counted from the 1.13 sources, not guessed.
+  **Not verified in the
+  editor GUI:** that the entry appears under **Tools**, with a single separator above it and no scroll
+  bar, and that it stays that way after a script hot-reload — the dedupe and the cap are by
+  construction (text match + adjacent-separator collapse, cap = item count) and the engine
+  itself drops a trailing separator on menu open; check it once by hand.
+
 * **The shipped example manifest moved to `docs/example_manifest.json`.** It is a format demonstration to be
   read beside `docs/MANIFEST_SPEC.md`, not a pack a project installs, so it lives with the docs; `README.md`,
   `AGENTS.md`, `CONTRIBUTING.md` and the issue template follow, as does the offline seed form

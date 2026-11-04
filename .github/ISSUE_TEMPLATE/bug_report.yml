@@ -69,7 +69,7 @@ body:
       label: Steps to reproduce
       description: Include whether it reproduces in a fresh project - that distinction usually decides whether the plugin or a project state is at fault.
       placeholder: |
-        1. Window menu -> Flax Asset Manager
+        1. Tools menu -> Flax Asset Manager
         2. Add URL -> https://.../index.json -> Add
         3. Select "wood_planks_02" -> Install
         4. Repros in a new empty project: yes
