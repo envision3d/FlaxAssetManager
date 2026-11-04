@@ -319,9 +319,3 @@ Strict rules: raw asset files only (`.cs` is the only allowed `Script` extension
 
 MIT — see [LICENSE](LICENSE). Release history is in [CHANGELOG.md](CHANGELOG.md); how to build, test and
 contribute is in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-The plugin bundles **EKEditorUIKit** (in `EKEditorUIKit/`) — the editor widget toolkit this window is
-built on — under the same MIT license. It is a sibling Flax plugin project referenced from
-`FlaxAssetManager.flaxproj` (`$(ProjectPath)` resolves relative to the referencing plugin's folder,
-so a clone of this repository is self-contained). The kit is a candidate for extraction into a
-standalone UI library later; nothing depends on that happening.
