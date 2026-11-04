@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Seed sources shipped WITH this plugin: every url below is appended once to the installing project's",
+    "Content/FlaxAssetManager/Sources.json (recorded in its seededUrls, so a source the user removes",
+    "stays removed). Each url is then fetched, validated and code-install-gated like a typed url, and",
+    "installs nothing by itself. A project declines this file with \"pluginSeed\": false in its",
+    "Settings.json. Forms a url takes: http(s), file://, an absolute path, a path relative to the",
+    "project, and the macros $(PluginPath) (this plugin's folder), $(ProjectPath), $(EnginePath).",
+    "Read once per editor session; edit it and restart (or Update Plugin) to apply. Enforced rules:",
+    "1 MiB ceiling, one seed per url, no url means a warning naming that entry."
+  ],
+  "seedSources": [
+    {
+      "url": "https://flax.envision3dstudios.com/asset-manifests/global-manifest-list.json",
+      "name": "Global Manifest"
+    }
+  ]
+}

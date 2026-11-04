@@ -109,7 +109,7 @@ namespace FlaxAssetManager.Core.Services
             {
                 string json = null;
                 string expanded = url?.Trim() ?? string.Empty;
-                // Expand macros like $(ProjectPath) / $(EnginePath) and file://
+                // Expand macros like $(ProjectPath) / $(EnginePath) / $(PluginPath) and file://
                 try
                 {
                     if (expanded.Contains("$(ProjectPath)", StringComparison.OrdinalIgnoreCase))
@@ -121,6 +121,17 @@ namespace FlaxAssetManager.Core.Services
                         if (Directory.Exists(Path.Combine(Globals.EngineContentFolder ?? "", "..")) )
                             enginePath = Path.GetFullPath(Path.Combine(Globals.EngineContentFolder, ".."));
                         expanded = expanded.Replace("$(EnginePath)", enginePath, StringComparison.OrdinalIgnoreCase);
+                    }
+                    // $(PluginPath) = this plugin's folder, resolved by the plugin seed-file discovery
+                    // (its own project file, contained to the open project), so a plugin that ships a
+                    // manifest can be pointed at it without naming a folder - D16: a folder name is not
+                    // identity. Left unresolved, the macro stays in the path and the source reports a
+                    // fetch failure, rather than reading somewhere nobody agreed on.
+                    if (expanded.Contains("$(PluginPath)", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var pluginFolder = _settings.PluginFolderFullPath;
+                        if (!string.IsNullOrEmpty(pluginFolder))
+                            expanded = expanded.Replace("$(PluginPath)", pluginFolder, StringComparison.OrdinalIgnoreCase);
                     }
                 }
                 catch { }

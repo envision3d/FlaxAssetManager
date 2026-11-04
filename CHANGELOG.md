@@ -9,6 +9,43 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
 
 ### Added
 
+* **Seeding the source list** — two channels, one rule set: a **plugin** ships `seed_sources.json` next to
+  its `.flaxproj`, and a **project** declares `seedSources` in its own `Settings.json`. Either way a fresh
+  checkout opens with the manifest URLs registered instead of an empty picker that only **Add URL** fills.
+  `PluginSeedFile` finds the plugin's folder by its own project file (running-assembly ancestors → the open
+  project's `References` → the documented `Plugins/<name>`, every route validated; D16: a folder name is not
+  identity), reads that file under a 1 MiB cap, and refuses to read a plugin folder outside the open project.
+  `SettingsService.ApplySeedSources` appends each URL this project has not been seeded with yet — project
+  list first, plugin file second, and the log names the channel each source arrived from — from `Load` (so a
+  session's first fetch already sees it) and from `ReloadSources` for the project list, while the plugin's own
+  file is read once per session: a plugin's files do not change under a running editor, so editing that file
+  takes effect on the next start, which is also what **Update Plugin** asks for. `Sources.json` records the
+  URLs it has applied under `seededUrls`. That record is what keeps the feature honest: a seed is applied
+  **once**, so a source you **Remove**, rename, or delete from the file stays removed on every later start; a
+  URL that is already configured is recorded as applied and keeps its own name and enabled flag; URLs compare
+  `OrdinalIgnoreCase`. A seed registers a source, it never installs one: it is fetched, manifest-validated,
+  size-capped and installs-code-confirmed exactly like a typed URL. A seed URL takes everything a source URL
+  takes (`http(s)`, `file://`, absolute, project-relative, `$(PluginPath)` = this plugin's folder,
+  `$(ProjectPath)`, `$(EnginePath)`), which is why seeding a manifest that ships inside a project, or inside a
+  plugin, needed no new fetch path. This plugin's own seed file names its author's hosted manifest index and
+  no third-party source - nothing is bundled, and no URL is forced on a project that declines the file, so
+  D12 stands — and a project that wants none of it
+  puts `pluginSeed: false` in its `Settings.json`, which declines the plugin's file while leaving
+  `$(PluginPath)` usable for URLs the project wrote itself. See `docs/DECISIONS.md` D19. **Tested:** compiles
+  clean through `Flax.Build` on a host project and against the 1.13.7013 editor assembly with
+  `-warnaserror`, 0 warnings. Live in the editor, across four starts: the plugin's seed file is found through
+  the open project's `References`, logs `seeded source '$(PluginPath)/example_manifest.json' from
+  seed_sources.json (plugin)`, its manifest is read **from disk** (14 assets, no network), the URL lands in
+  `Sources.json` `seededUrls`, and the next start applies nothing; with `pluginSeed: false` the plugin's file
+  is reported as not applied and nothing is registered. The project channel was verified the same way
+  (`seeded source '<url>' from Settings.json seedSources`, recorded, silent on the next start). **Not verified
+  in the editor GUI:** that **Remove** and **Edit** (rename) keep a seeded source out permanently — the record
+  makes it so by construction, and a recorded seed adding nothing on a later start is the half that was run.
+  Check it once by hand: seed a source, **Remove** it, restart the editor, and it should stay gone.
+  Live again the same way once the shipped file was edited to name the author's hosted index: that start
+  recorded the URL in `seededUrls` and, because the identical URL was already a configured source, changed
+  nothing about the entry - the user's display name and enabled flag stayed.
+
 * **An install-state column in the asset list** — the list showed a name, a type/version summary and
   a trailing chip, and the chip only carried install state for the one source that fills it
   (`InstallService.ChipText`); a category, tags, or nothing said whether the item was installed in
@@ -83,6 +120,11 @@ All notable changes to **FlaxAssetManager** are documented here. The format foll
   hung `git pull` cannot land files after the operation has been reported over (D16).
 
 ### Changed
+* **The shipped example manifest moved to `docs/example_manifest.json`.** It is a format demonstration to be
+  read beside `docs/MANIFEST_SPEC.md`, not a pack a project installs, so it lives with the docs; `README.md`,
+  `AGENTS.md`, `CONTRIBUTING.md` and the issue template follow, as does the offline seed form
+  `$(PluginPath)/docs/example_manifest.json`. `example_index.json` stays in the plugin root, where the
+  local-server verification recipe serves it.
 
 * **Each variant of a pack keeps its own subfolder** — installing with a variant selected writes that
   set to `<contentDestination>/<sourceId>/<packId>/files/<variant>/<path>` (scripts under

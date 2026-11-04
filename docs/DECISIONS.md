@@ -57,7 +57,7 @@ engine-version-sensitive — they moved from the importer into `MaterialGraphBui
   redistributed from someone else.
 * The **catalog** (manifests for third-party sources, plus the scraper) lives in a separate
   repository that stays private and is **not referenced from this plugin repository** at all — no code,
-  no README, no docs. The plugin ships only `example_manifest.json` and documents authoring and
+  no README, no docs. The plugin ships only `docs/example_manifest.json` and documents authoring and
   hosting your own manifests (README → "Authoring and hosting your own manifests"). The catalog is MIT
   with an explicit **asset carve-out**: manifests link to assets, they never ship them, so each source
   keeps its own license and the obligations land on the **end user** who ships them — CC-BY-3.0 /
@@ -713,3 +713,127 @@ stays live, so the per-frame `Update` walk is linear in it — tens of microseco
 grows to tens of thousands of packs the next step is a row window over the same pool (show rows
 `[scroll/rowHeight, +visible]`, which the engine's drawing cull already assumes), and the search text could
 be matched off the main thread, since the filter is pure data.
+
+---
+
+## D19 — Seeding the source list: a plugin ships a seed file, a project declares its own · **implemented**
+
+A fresh install opens with an empty source picker, which is deliberate (D12: the plugin advertises
+nothing). The cost of that rule showed up twice: a team that wants every project pointed at its own
+catalog had to type the same URL into every checkout, and a project with no network — or a first-time
+user of the plugin — had nothing to look at, because the only way in is **Add URL**. Seeding is the
+question of who may put a URL into `Sources.json` without a click.
+**Amended while implementing, on the requesting user's call ("the seed file needs to be in the plugin"):** a
+seed kept in the project's `Settings.json` travels with a *project*, which is right for a studio catalog and
+useless for the case that mattered most here - a plugin author who publishes a manifest and wants every
+install to start with it, versioned with the plugin and refreshed by updating the plugin. So seeding has two
+channels, and the plugin's is a file that lives next to the plugin's own project file.
+
+**Resolved: both authors seed, and every seed names where it came from.** A plugin ships
+`seed_sources.json` next to its `.flaxproj`; a project declares `seedSources` in its own `Settings.json`:
+```json
+// the plugin's seed_sources.json, next to its .flaxproj - ships and versions with the plugin
+{ "seedSources": [ { "url": "https://flax.envision3dstudios.com/asset-manifests/global-manifest-list.json", "name": "Global Manifest" } ] }
+```
+
+```json
+// the project's Content/FlaxAssetManager/Settings.json - committed with the project
+{ "seedSources": [
+  { "url": "https://team.internal/assets.json", "name": "Studio art" },
+  { "url": "$(ProjectPath)/Manifests/studio_art.json" }
+] }
+```
+
+`PluginSeedFile` finds **this plugin's folder** - by the running assembly's ancestors, then by the open
+project's `References`, then by the documented `Plugins/<name>` - and every route is validated by this
+plugin's own project file, never by a folder name (D16: a folder name is not identity), with a containment
+check that refuses to read a folder outside the open project. `SettingsService.ApplySeedSources` then appends
+every seed URL this project has not been seeded with yet, project list first and the plugin's file second,
+and the log line names the channel each source arrived from. `Load` runs both, so a session's first fetch
+already sees them; `ReloadSources` re-applies the project list, the rule `Sources.json` edits already follow,
+while the plugin's file is read once per session, because a plugin's own files do not change under a running
+editor - editing it takes effect on the next start, which is also what **Update Plugin** asks for.
+`Sources.json` gains `seededUrls`: the record of which seed URLs have been applied here, from either channel.
+
+The rules that make writing a source without a click safe:
+
+* **A seed is applied once per URL.** Without `seededUrls` a seed is a source that cannot be removed —
+  the user deletes it, the next editor start puts it back. With the record, **Remove** and **Edit**
+  (rename) are honoured permanently and the seed stops being a nag. Deleting the line from
+  `Sources.json` by hand counts as a removal, exactly as adding a line there counts as an addition.
+* **The user's entry wins.** A URL that is already configured — added by hand before the seed existed —
+  is recorded as applied and left alone; the seed's `name` and `enabled` are used only for an entry the
+  seed creates. Seeding never overwrites a display name and never re-enables a disabled source.
+* **URLs compare `OrdinalIgnoreCase`**, the way `AddSource` and `RemoveSource` compare, so a scheme- or
+  case-spelling difference cannot smuggle a duplicate source in or hide a recorded removal.
+* **Each channel stays in its lane.** A project's seed list is project data. The plugin's seed file ships
+  with the plugin and lists only what its author publishes - this plugin names its author's hosted manifest
+  index, the catalog its author publishes for anyone to add by hand, and no one else's source, so D12's rule
+  (no bundled catalog, no default URL, no named third-party source) is intact by scope. The file is
+  plain JSON, read with a 1 MiB cap through the same capped reader the network uses, and a project that wants
+  none of it puts `pluginSeed: false` in its `Settings.json`. The last word about what registers in a
+  project's source list stays with that project, which is the thing D12 was protecting; the plugin's seed
+  adds URLs a user gets by choosing to install that plugin.
+* **A seed is a source, not a way past a gate.** It lands in `Sources.json` and is fetched, validated,
+  size-capped and code-install-confirmed like a typed URL; a seeded manifest that fails validation shows
+  as `(error)` and installs nothing. Seeding makes a source **browsable**, never installed: no
+  auto-install, no refresh timer, no pre-written install record.
+* **The seed list accepts every URL form a source accepts** — `http(s)`, `file://`, an absolute path, a
+  path relative to the project, and the `$(PluginPath)` (this plugin's folder, from the same discovery that
+  finds its seed file), `$(ProjectPath)` and `$(EnginePath)` macros - because `FetchOneAsync` already
+  resolves all of them. That is why the offline case needed no new code path: a manifest that ships inside
+  the project, or inside a plugin, is a seed like any other.
+* **Nothing is written when nothing changed.** A pass with no new seed leaves `Sources.json` alone, so a
+  tracked file is not dirtied on every editor start, and a project with no seed list stays exactly as
+  empty as D12 wants it.
+
+Rejected: **a built-in default URL in the plugin** (breaks D12 and the no-named-source rule, and makes
+the plugin answer for a catalog it does not review); **auto-adding the bundled example manifest on
+first run** (the plugin's own `docs/example_manifest.json` is a fine seed for a project to *write*, and a URL
+the user never asked for landing in a tracked file is the category of thing D12 refuses); **re-applying
+seeds on every start** (a source that returns after **Remove** is not a seed, it is a bug); **a
+`-FlaxAmSeedManifest` command line / `FLAX_AM_SEED_MANIFEST` seed** (the natural next step for headless
+CI, and a one-line input into this same method — the E2E harness would use it; left out because it is a
+second input channel for a problem a project file already solves, and every input channel is one more
+channel to document and keep contained); **seeding `.installed.json`** (an install writes remote bytes
+into the project, the one action this plugin takes only on a click); **`seedSources` inside
+`Sources.json`** (one file would carry both "what is configured" and "what the team asked for", and the
+**Edit List** affordance — whose whole job is the configured list — becomes a file a user is told not to
+break).
+Rejected again, at first and correctly for the shape I first wrote: **seeds only in the project's
+`Settings.json`, with no file in the plugin**. It answered the team-config problem and left the plugin author
+with nothing, which is why it was amended above; keeping the plugin's channel contained (its own folder, its
+own manifest, project opt-out, applied once) is what made it acceptable.
+
+**Blast radius:** `AssetSourceConfig.SeededUrls`, `FlaxAssetManagerSettings.SeedSources` and
+`FlaxAssetManagerSettings.PluginSeed`, all defaulting to what an existing file implies, so current files load
+unchanged and a file written by this build is read fine by an older build, which ignores the fields. One new
+file - `Core/Utils/PluginSeedFile.cs` (plugin-folder discovery, the seed-file read, the `$(PluginPath)` value)
+- one new public property and one new private method on `SettingsService`, a restructured
+`ApplySeedSources`, and one macro expansion in `AssetSourceManager.FetchOneAsync` beside the existing ones.
+The window, the installer, the validators and the install records are untouched. New plugin file:
+`seed_sources.json` at the plugin root, listing one URL its author publishes about their own catalog.
+`example_manifest.json` moved to `docs/example_manifest.json` - a format demonstration to be read beside
+`docs/MANIFEST_SPEC.md`, not an install target - with `README.md`, `AGENTS.md`, `CONTRIBUTING.md` and the
+issue template following. README, `AGENTS.md` and `docs/MANIFEST_SPEC.md` §11.6 state the new fields and both
+seed channels.
+
+**Verified:** compiles clean - through `Flax.Build` on a host project, and against the 1.13.7013 editor
+assembly with `-warnaserror`, 0 warnings - and live in the editor, across four starts. A project with no seed
+record logs `plugin seed file '<plugin>/seed_sources.json' (found via the reference
+'<plugin>/FlaxAssetManager.flaxproj' of 'FlaxAssetManagerTest.flaxproj') lists 1 source(s)`, then
+`seeded source '$(PluginPath)/example_manifest.json' from seed_sources.json (plugin)`, then fetches that
+manifest **from disk** (`Manifest from $(PluginPath)/example_manifest.json is 14 assets`, no network) and
+records the URL in `Sources.json` `seededUrls`. The next start logs the file, applies zero seeds and writes
+nothing (a seed is applied once). A project with `pluginSeed: false` logs that the plugin's seed file is not
+applied and registers nothing. The project channel was verified the same way earlier: `seeded source '<url>'
+from Settings.json seedSources`, recorded, and silent on the next start. **Not clicked through:** that
+**Remove** and **Edit** (rename) keep a seeded source out permanently - the record makes it so by
+construction, the add-on-start path is the one that was run, and a recorded seed adding nothing on a later
+start is the half of that rule that was exercised.
+A later start, after the shipped file was edited to name the author's hosted index, recorded that URL in
+`seededUrls` and left the identical already-configured source exactly as the user had it - a seed adds a
+source, it never rewrites one.
+The quoted logs name `$(PluginPath)/example_manifest.json`, the path from before the example manifest moved
+to `docs/example_manifest.json`; the macro expansion and the on-disk fetch they show are the same code path
+the moved path uses, unchanged.

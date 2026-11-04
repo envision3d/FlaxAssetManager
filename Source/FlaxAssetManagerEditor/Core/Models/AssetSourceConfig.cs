@@ -11,6 +11,17 @@ namespace FlaxAssetManager.Core.Models
     {
         [JsonProperty("sources")]
         public List<SourceUrlEntry> Sources { get; set; } = new List<SourceUrlEntry>();
+
+        /// <summary>
+        /// Seed URLs that have already been applied to this project's source list, from <b>either</b> seed
+        /// channel: the project's <c>Settings.json</c> <c>seedSources</c>, or the <c>seed_sources.json</c> a
+        /// plugin ships next to its own project file. Kept so a seed is a <b>one-time</b> starting point: a
+        /// source the user removes (the window's <b>Remove</b>, an <b>Edit</b>, or an edit of this file)
+        /// stays removed instead of reappearing on the next editor start. Written only by
+        /// <see cref="Services.SettingsService.ApplySeedSources"/>, which states the rules.
+        /// </summary>
+        [JsonProperty("seededUrls")]
+        public List<string> SeededUrls { get; set; } = new List<string>();
     }
 
     public class SourceUrlEntry
@@ -47,6 +58,46 @@ namespace FlaxAssetManager.Core.Models
         /// </summary>
         [JsonProperty("selectedVariants")]
         public Dictionary<string, string> SelectedVariants { get; set; } = new Dictionary<string, string>();
+
+        /// <summary>
+        /// The manifest URLs this project starts with, authored by the team in <c>Settings.json</c> and
+        /// applied by <see cref="Services.SettingsService.ApplySeedSources"/> on load and on every
+        /// **Refresh**. Each entry is appended to <c>Sources.json</c> **once** - never re-added after the
+        /// user removes it - and from then on is an ordinary source: its enabled flag, display name, and
+        /// the trust decision belong to the user (see <c>docs/DECISIONS.md</c> D12 and D19). This is the
+        /// project's own seed channel; the plugin's is <see cref="PluginSeed"/> and the file it governs.
+        /// </summary>
+        [JsonProperty("seedSources")]
+        public List<SeedSourceEntry> SeedSources { get; set; } = new List<SeedSourceEntry>();
+
+        /// <summary>
+        /// Opt-out for the seed file the <b>plugin</b> ships (<c>seed_sources.json</c> next to the
+        /// plugin's <c>.flaxproj</c>). <c>false</c> in <c>Settings.json</c> and the plugin's seed list is
+        /// not applied to this project at all - a project keeps the last word on who writes into its
+        /// source list. A project's own <c>seedSources</c> are unaffected, and
+        /// <c>$(PluginPath)</c> keeps resolving, so a project that names the plugin's files by hand is
+        /// not opting out of that. See <c>docs/DECISIONS.md</c> D19.
+        /// </summary>
+        [JsonProperty("pluginSeed")]
+        public bool PluginSeed { get; set; } = true;
+    }
+
+    /// <summary>
+    /// One seed entry: a manifest URL, an optional display-name override, and an optional
+    /// <c>enabled:false</c> to stage a source without fetching it. The shape is shared by both seed
+    /// channels - the project's <c>Settings.json</c> <c>seedSources</c>, and the <c>seedSources</c> list of
+    /// the <c>seed_sources.json</c> a plugin ships next to its own project file. The <c>url</c> accepts
+    /// everything a <c>Sources.json</c> url accepts - <c>http(s)</c>, <c>file://</c>, an absolute path, a
+    /// path relative to the project, and the <c>$(PluginPath)</c> (a plugin's own folder, see
+    /// <see cref="Utils.PluginSeedFile"/>), <c>$(ProjectPath)</c> and <c>$(EnginePath)</c> macros (see
+    /// <see cref="Services.AssetSourceManager.FetchOneAsync"/>) - so a seed can point at a manifest that
+    /// ships inside the project, or inside a plugin, and needs no network.
+    /// </summary>
+    public class SeedSourceEntry
+    {
+        [JsonProperty("url")] public string Url { get; set; }
+        [JsonProperty("name")] public string Name { get; set; }
+        [JsonProperty("enabled")] public bool Enabled { get; set; } = true;
     }
 
     /// <summary>

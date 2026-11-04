@@ -26,9 +26,9 @@ Source/FlaxAssetManagerEditor/FlaxAssetManagerEditor.Build.cs # GameEditorModule
 Source/FlaxAssetManagerTarget.Build.cs             # GameProjectTarget
 Source/FlaxAssetManagerEditorTarget.Build.cs       # GameProjectEditorTarget
 Source/FlaxAssetManagerEditor/Core/Models/
-  PackType.cs, FileAssetType.cs, FileEntry.cs, PackEntry.cs (PackVariant nested here), AssetSourceManifest.cs (pack + index kinds), IndexEntry.cs (one linked manifest of an index), AssetSourceConfig.cs (FlaxAssetManagerSettings, InstalledManifest/InstalledEntry)
+  PackType.cs, FileAssetType.cs, FileEntry.cs, PackEntry.cs (PackVariant nested here), AssetSourceManifest.cs (pack + index kinds), IndexEntry.cs (one linked manifest of an index), AssetSourceConfig.cs (FlaxAssetManagerSettings (+PluginSeed opt-out) + SeedSourceEntry (one seed entry, used by BOTH seed channels: Settings.json seedSources and the plugin's seed_sources.json), AssetSourceConfig (sources[] + seededUrls), InstalledManifest/InstalledEntry)
 Source/FlaxAssetManagerEditor/Core/Services/
-  SettingsService.cs        # owns Content/FlaxAssetManager/{Settings,Sources,.installed}.json
+  SettingsService.cs        # owns Content/FlaxAssetManager/{Settings,Sources,.installed}.json; LoadPluginSeedFile reads the plugin's seed_sources.json (via PluginSeedFile) once per session and resolves $(PluginPath); ApplySeedSources appends BOTH seed channels (project Settings.json first, then the plugin's file) into Sources.json once per URL — Sources.json seededUrls is what makes a removal permanent (D19) — and runs from Load and from ReloadSources, so a project seed edit applies on Refresh (a plugin seed file applies on restart)
   AssetSourceManager.cs     # HttpClient 30s, ValidateManifest (STRICT) + ValidateIndex (index manifests)
   AssetInstallerService.cs  # SemaphoreSlim(6), SHA256, git clone into staging, zip extract (entry-name rule), reference injection; VariantSubFolder is the one layout authority (files/<variant>/ for a variant install), RemoveReplacedInstall + PruneStaleVariantFolders drop the set a variant switch replaces, PruneEmptyFolders prunes to the pack root; uninstall deletes files[] + generatedAssets + imported sidecars, then prunes the pack folder
 Source/FlaxAssetManagerEditor/Core/Services/MaterialCreatorService.cs # PBR role detection + surface-graph rewiring + model slot assignment (stock API, engine calls marshalled to the main thread); records the created M_<packId>.flax on the install entry (RecordGeneratedAsset)
@@ -39,6 +39,7 @@ Source/FlaxAssetManagerEditor/Core/Utils/MaterialGraphBuilder.cs # creates the m
   FlaxProjectLocator.cs   # engine-free *.flaxproj reader/finder: a project's Name field, identity by file name OR Name, $(ProjectPath)/$(EnginePath)/$(ProjectName) macro expansion of References, bounded BFS scan that skips Binaries/Cache/Source/…, ancestors walk from an assembly dir; case-correct path comparison
   GitRunner.cs            # shared git spawn: ArgumentList per argument, exit code + both streams returned as data, kills an abandoned/timed-out git (with its tree)
   MainThreadDispatcher.cs  # the plugin's one main-thread hop (wraps Scripting.RunOnUpdate) for post-await engine/GUI work
+  PluginSeedFile.cs      # finds THIS plugin's folder by its project file (assembly ancestors → open project's References → documented Plugins/<name>, every route validated), reads the seed_sources.json next to it (JSON-only, 1 MiB cap), folder outside the project = report and never read, $(PluginPath) = that folder (D19)
   ContentDatabaseUtils.cs # content-folder refresh + lookups shared by install/import/material
   SystemFileOpener.cs     # open Sources.json in the OS editor (detached, non-blocking); refuses paths outside the project and shell-executable extensions
 Source/FlaxAssetManagerEditor/Core/Tests/VariantE2ETest.cs # live-editor E2E (manifest→install→material); run with FLAX_AM_E2E=1, hooked in FlaxAssetManagerEditor.cs:53
@@ -50,12 +51,16 @@ Content/GameSettings.json           # required for the .flaxproj to open (only f
 # Settings.json / Sources.json / .installed.json are NOT in this repo: SettingsService resolves them
 # against Globals.ProjectFolder (SettingsService.cs:35) = the HOST project's Content/FlaxAssetManager,
 # alongside installed packs and the .previews cache. .gitignore keeps local state out of the plugin.
-example_manifest.json       # every FileAssetType + archivePack demonstrated (13 packs)
+seed_sources.json         # the plugin's OWN seed channel (D19): seedSources[] applied once into the host project's Sources.json, $(PluginPath) supported, project declines it with pluginSeed:false; names this plugin author's own hosted manifest index and no third-party source (D12's no-bundled-catalog rule stands: the author seeds their own)
 PRD.md                      # product intent only (goals / use-cases / non-goals); no schema, no file map
 # NOT in this repo: the third-party manifest catalog (textures/PBR, models, audio, icons, ...) and its
 # generator. That catalog is a separate repository outside this plugin and is not published with
-# it; .gitignore keeps example_manifests/, manifests/ and tools/ out of the plugin on purpose.
+# it; .gitignore keeps example_manifests/, manifests/ and tools/ out of the plugin on purpose. A seed URL
+# that names a catalog (the plugin author's own, hosted elsewhere) is a pointer, not a bundled catalog: the
+# plugin ships no catalog and advertises no third-party source (D12), and any project can decline the seed
+# file with pluginSeed:false (D19).
 docs/MANIFEST_SPEC.md       # exhaustive manifest permutations — read before touching schema
+docs/example_manifest.json  # every FileAssetType + archivePack demonstrated (13 packs)
 ```
 
 ## Hard Constraints — Do NOT Violate
@@ -102,8 +107,8 @@ Matrix `docs/MANIFEST_SPEC.md` §4.1 lists every valid/invalid `packType × payl
 
 `SettingsService` (`Globals.ProjectFolder` = `Globals.h:17`):
 
-- `Settings.json` `{contentDestination:"Content/FlaxAssetManager", scriptDestination:"Source/FlaxAssetManager", overwriteExisting:true}` defaults — relative to project root. Changing requires restart.
-- `Sources.json` `{sources:[{url,enabled,name?}]}` — `AddSource/RemoveSource` persist here; `EnsureSourcesFile` materializes it on demand so the UI's `Edit List` button can hand it to the system text editor (`Core/Utils/SystemFileOpener.cs`); `FetchAllAsync` re-reads it so external edits apply on `Refresh`.
+- `Settings.json` `{contentDestination:"Content/FlaxAssetManager", scriptDestination:"Source/FlaxAssetManager", overwriteExisting:true, selectedVariants:{}, seedSources:[{url,name?,enabled?}], pluginSeed:true}` defaults — relative to project root. Changing destinations requires restart. `seedSources` is the project's own seed list and `pluginSeed:false` declines the `seed_sources.json` a plugin ships next to its project file (D19); the plugin's own seed file lists its author's hosted manifest index and no third-party source (D12 keeps its force: the author seeds their own catalog, and pluginSeed declines the file), and every seed URL — from either channel — goes through the same fetch + `ValidateManifest` path as a typed one.
+- `Sources.json` `{sources:[{url,enabled,name?}], seededUrls:[url]}` — `AddSource/RemoveSource` persist here; `EnsureSourcesFile` materializes it on demand so the UI's `Edit List` button can hand it to the system text editor (`Core/Utils/SystemFileOpener.cs`); `FetchAllAsync` re-reads it so external edits apply on `Refresh`. `seededUrls` (written only by `ApplySeedSources`) records which seed URLs (project `seedSources` or the plugin's `seed_sources.json`) have been applied here, so a seed is applied **once**: a source the user removed, renamed or deleted is never resurrected, URLs compare `OrdinalIgnoreCase`, and an entry that already exists keeps its own name and enabled flag (D19).
 - `.installed.json` `{installed:[{sourceId,sourceUrl,packId,packName,packType,installedVersion,installedAt,distributionUrl?,resolvedCommit?,installPath,files[]}]}` — key `sourceId+packId`, badge via `HasUpdate` (`installedVersion != pack.version`).
 
 Destinations (downloaded files go under a `files/` subfolder; pack-*generated* assets — e.g. the created `.flax` material — stay at the pack root):
@@ -239,9 +244,9 @@ Kept as a record of what the guards below are defending, so they are not "simpli
 
 ## Open items — need a product/publishing decision
 
-See **`docs/DECISIONS.md`** (numbered D1-D16; **D1 is resolved** — the material pipeline is stock
+See **`docs/DECISIONS.md`** (numbered D1-D19; **D1 is resolved** — the material pipeline is stock
 API only, and material creation runs as part of installing a texture pack again; **D3** off-main-thread GUI work and
-**D14** write-from-remote-input safety and **D16** the plugin's own `git pull` + recompile update are resolved too). Headlines: **D2** licensing incl. vendored
+**D14** write-from-remote-input safety, **D16** the plugin's own `git pull` + recompile update, **D17** saving a material surface reloads the asset, **D18** the asset list is a fill, and **D19** a project seeds its own source list are resolved too). Headlines: **D2** licensing incl. vendored
 `EKEditorUIKit`, **D4** E2E test shipping in the release assembly, **D5** material role coverage
 (the UI now states what the material will not use), **D6** uninstall deletes generated/imported
 assets, **D7/D8** plugin metadata and publishing hygiene,
@@ -268,9 +273,10 @@ FLAX=/path/to/FlaxEngine   # engine checkout with Binaries/Tools/Flax.Build
 # Fast API check against an OFFICIAL Flax release (no editor, seconds; CI runs this):
 dotnet build compat/FlaxAssetManager.Compat.csproj -c Development -p:EngineDir=/path/to/flax
 
-# Local manifest test (the spec examples ship with the plugin: example_manifest.json, example_index.json)
+# Local manifest test (the spec examples ship with the plugin: docs/example_manifest.json, example_index.json)
 python3 -m http.server --directory Plugins/FlaxAssetManager 8899
-# Window: Add URL → http://localhost:8899/example_manifest.json → Refresh → Install → check Content/… + Source/… + .installed.json
+# Window: Add URL → http://localhost:8899/docs/example_manifest.json → Refresh → Install → check Content/… + Source/… + .installed.json
+# Seed: plugin seed_sources.json (and Settings.json seedSources) → editor start appends the url to Sources.json + records seededUrls; next start adds nothing; Remove + restart keeps it removed; pluginSeed:false in Settings.json skips the plugin's file; $(PluginPath) in a seed url fetches from the plugin folder on disk
 # Index manifests: Add URL → http://localhost:8899/example_index.json → the list shows the linked manifests,
 # pick one → Add linked source → Refresh → the linked manifest appears as its own source (nothing installs
 # from the index itself; entry URLs are placeholders, so expect a fetch failure for example.com).
@@ -292,7 +298,7 @@ No native code (`BuildNativeCode=false` both modules); pure C#; Newtonsoft.Json 
 
 ## Extending
 
-- **New FileAssetType:** Add to `FileAssetType.cs`, update `AllowedScriptExts/ForbiddenExts` in `AssetSourceManager.cs:27` if routing changes, update `MANIFEST_SPEC.md` §5.2 (type ↔ extension) and `example_manifest.json`, rebuild. Keep `StringEnumConverter` case-insensitive compat.
+- **New FileAssetType:** Add to `FileAssetType.cs`, update `AllowedScriptExts/ForbiddenExts` in `AssetSourceManager.cs:27` if routing changes, update `MANIFEST_SPEC.md` §5.2 (type ↔ extension) and `docs/example_manifest.json`, rebuild. Keep `StringEnumConverter` case-insensitive compat.
 - **New PackType (e.g. Template):** Add to `PackType.cs`, add branch in `AssetInstallerService.InstallAsync`, update `ValidateManifest` matrix, extend `AssetSourceConfig` if needed; omit → AssetPack compat.
 - **Services:** Keep I/O out of models, UI out of services. Add helpers under `Core/Utils/`. Use `SettingsService` for all `Content/FlaxAssetManager/*` I/O.
 - **Git:** Keep plain clone. To add update check without re-clone, implement `git ls-remote` ahead of `clone` — do not touch submodules.
@@ -307,7 +313,8 @@ No native code (`BuildNativeCode=false` both modules); pure C#; Newtonsoft.Json 
 - Namespace collision: `FlaxAssetManagerEditor` is both project folder and type — our editor plugin is `namespace FlaxAssetManagerEditor` to avoid `FlaxAssetManager.Editor` vs `FlaxEditor.Editor` ambiguity (`global::FlaxEditor.Editor` qualifier in window ctor).
 - Forgetting `PublicDependencies.Add("FlaxAssetManager")` in `FlaxAssetManagerEditor.Build.cs` → `GamePluginType` unresolved.
 - Adding `Other` or allowing `.cpp` in assetPack → violates PRD strict rule — will fail validation and disappoint users.
-- Forgetting to update `example_manifest.json` + `MANIFEST_SPEC.md` together when schema changes.
+- Forgetting to update `docs/example_manifest.json` + `MANIFEST_SPEC.md` together when schema changes.
+- **Seed scope**: the plugin's seed_sources.json names its author's own hosted manifest index and no third-party source (D12: nothing is bundled, and a seed is one URL the author publishes about their own catalog). A seed registers a source through the same fetch + ValidateManifest path, is applied **once** per URL (recorded in Sources.json seededUrls, so removals stay removed), and a project declines the plugin's file with pluginSeed:false. $(PluginPath) resolves to the plugin folder found by its project file and contained to the project; a folder outside the project is reported, not read (D16: a folder name is not identity).
 - Re-adding `Required.Always` to `AssetSourceManifest.assets`: an index manifest has no `assets`. Kind-dependent rules belong in `ValidateManifest`/`ValidateIndex`, the single authority (D13).
 - Reading a remote body without a cap (`GetStringAsync`/`GetByteArrayAsync` have no limit) — use
   `HttpStream.DownloadTextAsync` / `DownloadPreviewAsync`, which enforce the manifest/preview caps.
@@ -329,7 +336,7 @@ No native code (`BuildNativeCode=false` both modules); pure C#; Newtonsoft.Json 
 
 - Product intent: `PRD.md:1` (goals, use-cases, non-goals — deliberately not a spec)
 
-- Runnable manifest with every type: `example_manifest.json:1` (13 packs, Counter shows all 9 types)
+- Runnable manifest with every type: `docs/example_manifest.json:1` (13 packs, Counter shows all 9 types)
 - Exhaustive manifest permutations, error catalog, kitchen-sink examples: `docs/MANIFEST_SPEC.md:1`
 - Open decisions (material ownership, licensing, thread-affinity refactor, publishing, …): `docs/DECISIONS.md:1`
 - Engine refs: `Flax.Build/ProjectInfo.cs:214` (macros), `ContentFolder.cs:27` (Content vs Source), `UIModule.cs:775` (Window menu), `PluginsWindow.cs:388` (clone pattern).

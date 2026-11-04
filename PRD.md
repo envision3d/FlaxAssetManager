@@ -87,6 +87,14 @@ without hand-assembling them from git URLs and forum threads.
   the new code is what the editor runs. Manual, confirmed, and refused before writing when the checkout
   is not a clean branch that tracks a remote (D16). It is not UC4: the plugin is not a pack, has no
   version badge, and nothing is polled.
+* **UC8 — Seed a project.** A plugin author ships `seed_sources.json` next to the plugin's own project file,
+  and a studio or project author declares `seedSources` in the project's `Settings.json`, so a fresh checkout
+  opens with the same sources registered and a project - or a plugin - that ships its manifest locally needs
+  no network to have something to browse. Each seed is applied **once**: a source the user removes stays
+  removed. Each seed names where it came from in the log. The plugin's own seed file lists only the manifest
+  the plugin itself provides - no third-party URL, no default source (D12) - a project declines that channel
+  with `pluginSeed: false`, and a seeded source is fetched, validated and code-install-gated like a typed URL
+  (D19).
 
 ## 5. Product rules the implementation is built around
 

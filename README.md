@@ -13,7 +13,9 @@ publishing a URL.
 
 * **Source registry** — register manifest URLs; the list starts empty and you point it only at sources
   you trust (see *Authoring and hosting your own manifests*). Enable, disable, rename, remove, and
-  bulk-edit the list in `Sources.json`.
+  bulk-edit the list in `Sources.json`. A plugin ships its starting sources in `seed_sources.json` next to
+  itself, and a project declares its own in `Settings.json` `seedSources`, so a fresh checkout opens with
+  them registered (see *Seeding the source list*).
 * **Master manifests** — an *index* manifest (`manifestKind: "index"`) is a manifest that links other
   manifests, so one URL is a table of contents its owner keeps updating. Browse it in the window and add
   the entries you want with **Add linked source**; an index never installs anything itself.
@@ -180,8 +182,14 @@ sharing one would merge their records. **Uninstall** is cancellable while it run
 Configurable in `Content/FlaxAssetManager/Settings.json`:
 
 ```json
-{ "contentDestination": "Content/FlaxAssetManager", "scriptDestination": "Source/FlaxAssetManager", "overwriteExisting": false }
+{ "contentDestination": "Content/FlaxAssetManager", "scriptDestination": "Source/FlaxAssetManager",
+  "overwriteExisting": false, "seedSources": [ { "url": "https://team.internal/assets.json" } ] }
 ```
+
+`seedSources` — the manifest URLs a fresh checkout of this project starts with, applied **once** into
+`Sources.json` and never re-added after you remove them. `pluginSeed` (default `true`), set to `false`,
+declines the `seed_sources.json` that a plugin ships next to its own project file (see *Seeding the source
+list*).
 
 Files land in `<contentDestination>/<sourceId>/<packId>/files/<path>` (scripts in
 `<scriptDestination>/…`); picking a **variant** puts them one level deeper, in `files/<variant>/<path>`,
@@ -193,9 +201,10 @@ material land in the pack root.
 > already on disk is not downloaded, not overwritten and not re-imported, and is reported as
 > `skipped` in the log.
 
-Sources list in `Content/FlaxAssetManager/Sources.json`. Install tracking in
-`Content/FlaxAssetManager/.installed.json` drives **Update available** badges (manifest `version`
-vs `installedVersion`).
+Sources list in `Content/FlaxAssetManager/Sources.json`, which also carries `seededUrls` — the seed URLs
+already applied here, so a source you removed is not re-added (see *Seeding the source list*). Install
+tracking in `Content/FlaxAssetManager/.installed.json` drives **Update available** badges (manifest
+`version` vs `installedVersion`).
 
 ### Where that state lives
 
@@ -213,13 +222,64 @@ Content/FlaxAssetManager/.installed.json
 Content/FlaxAssetManager/.previews/
 ```
 
-Keep `Sources.json` tracked if you want a shared source list for your team (it is just URLs,
-enabled flags and display names); treat `Settings.json` as team config if you standardise the
-destinations.
+Keep `Sources.json` tracked if you want a shared source list for your team (it is just URLs, enabled flags
+and display names, plus the `seededUrls` record); treat `Settings.json` as team config if you standardise
+the destinations — and the seed list, because committing it is how a team seeds every one of its projects
+with the same sources. A seed shipped inside a plugin needs no tracking in the project at all: it arrives
+with the plugin and is versioned with it (see *Seeding the source list*).
+
+### Seeding the source list
+
+Two authors can seed a project, and both stay visible. A seed **registers** sources; it installs nothing.
+
+**A plugin ships its seed file next to itself** - `seed_sources.json`, versioned with the plugin, so an
+install starts seeded and updating the plugin updates the seed:
+
+```json
+{ "seedSources": [
+  { "url": "https://flax.envision3dstudios.com/asset-manifests/global-manifest-list.json", "name": "Global Manifest" }
+] }
+```
+
+**A project seeds itself** - a `seedSources` list in its own `Content/FlaxAssetManager/Settings.json`,
+committed with the project:
+
+```json
+{ "seedSources": [
+  { "url": "https://team.internal/assets.json", "name": "Studio art" },
+  { "url": "$(ProjectPath)/Manifests/studio_art.json", "enabled": true }
+] }
+```
+
+Press **Refresh** (or start the editor) and every seed this project has not been seeded with yet is appended
+to `Sources.json`, then fetched and validated exactly like a URL you typed in - same manifest rules, same
+size caps, same **Installs code** confirmation. `Sources.json` records the seed URLs under `seededUrls`,
+which is what makes a seed a *starting point* rather than a source you cannot get rid of: a seeded source you
+**Remove**, rename, or delete from the file stays removed on every later start. A seed whose URL is already
+configured is recorded as applied and its existing entry - display name and enabled flag - is left alone. The
+plugin's seed file is read once per session (a plugin's own files do not change under a running editor), so
+editing it takes effect on the next start, which is also what **Update Plugin** asks for.
+
+A seed URL accepts everything a source URL accepts: `http(s)`, `file://`, an absolute path, a path relative
+to the project, and the `$(PluginPath)` (this plugin's folder, found by its project file, not by a folder
+name), `$(ProjectPath)` and `$(EnginePath)` macros. So a studio commits one `Settings.json` and every
+project points at its own catalog, a plugin can point at a manifest it ships inside itself, and neither
+needs a network to have something to browse.
+
+A seed says where it came from in the log. This plugin's own seed file names its author's hosted manifest
+index - the same catalog its author publishes for anyone to add by hand - and nothing else: no third-party
+source, and no default URL pressed on a project that declines the file, which is what `"pluginSeed": false`
+in the project's `Settings.json` does while leaving `$(PluginPath)` usable for URLs the project wrote itself.
+A seed URL is an ordinary source URL, so a plugin that ships a manifest inside itself can seed it offline as
+well, as `$(PluginPath)/docs/example_manifest.json`.
 
 ## Authoring and hosting your own manifests
 
-This plugin ships **no** third-party manifests — only `example_manifest.json`, which demonstrates
+This plugin ships **no** third-party manifests - only `docs/example_manifest.json`, which demonstrates every
+file type and `archivePack` with placeholder URLs (`example_index.json` in the plugin root shows the index
+shape), and the plugin's own `seed_sources.json`, whose seed list names its author's hosted index. A source
+is nothing but a URL to a manifest JSON, so a catalog is simply whatever you publish:
+simply whatever you publish:
 every file type and `archivePack` with placeholder URLs. A source is nothing but a URL to a manifest
 JSON, so a catalog is simply whatever you publish:
 
@@ -229,6 +289,9 @@ JSON, so a catalog is simply whatever you publish:
 2. Host it anywhere over HTTPS — GitHub Pages, a release asset, S3, an internal file server.
 3. **Add URL** in the window. Nothing is registered anywhere; the plugin fetches, validates and lists
    the packs.
+4. Ship it with a plugin: list that URL in the plugin's `seed_sources.json` and every project that installs
+   the plugin starts with the source registered - applied once per URL, and declined by a project that puts
+   `pluginSeed: false` in its own `Settings.json` (see *Seeding the source list*).
 
 **A master manifest** — a manifest with `"manifestKind": "index"` and `"entries": [...]` links *other*
 manifests instead of listing assets (`example_index.json` in the plugin root is a working shape). Add the

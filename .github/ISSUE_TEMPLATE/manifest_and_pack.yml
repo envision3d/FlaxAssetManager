@@ -8,7 +8,7 @@ body:
     attributes:
       value: |
         Start with [`docs/MANIFEST_SPEC.md`](https://github.com/envision3d/FlaxAssetManager/blob/main/docs/MANIFEST_SPEC.md) and the working
-        examples (`Content/FlaxAssetManager/example_manifest.json`, `example_index.json`). Most
+        examples (`docs/example_manifest.json`, `example_index.json`). Most
         "the plugin shows nothing" reports are a spec mismatch, and the plugin logs the exact
         validation failure - read that first.
   - type: input

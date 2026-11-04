@@ -293,11 +293,14 @@ Installer does `clone -b "release/1.x"` then `git -C dest checkout abc123...`. `
 { "sources": [
   { "url": "https://example.com/manifest.json", "enabled": true,  "name": "Example" },
   { "url": "https://team.internal/assets.json",  "enabled": true  },
-  { "url": "https://old.example.com/old.json",   "enabled": false }
-]}
+  { "url": "https://old.example.com/old.json",   "enabled": false },
+  { "url": "$(ProjectPath)/Manifests/studio_art.json", "enabled": true, "name": "Studio art" },
+  { "url": "$(PluginPath)/docs/example_manifest.json", "enabled": true, "name": "Plugin example manifest" }
+],
+  "seededUrls": [ "$(ProjectPath)/Manifests/studio_art.json", "$(PluginPath)/docs/example_manifest.json" ] }
 ```
 
-Two manifests behind the first two URLs are shown as two entries in the source picker (`FlaxAssetManagerWindow._sourceCombo`). Disabled source is skipped during `FetchAllAsync`. Each source's `sourceId`+`pack.id` are independent — same `id` under different `sourceId` is distinct `InstalledEntry`.
+Two manifests behind the first two URLs are shown as two entries in the source picker (`FlaxAssetManagerWindow._sourceCombo`). Disabled source is skipped during `FetchAllAsync`. The last two entries were **seeded** — the fourth by the project's own `Settings.json` `seedSources`, the fifth by the `seed_sources.json` shipped next to the plugin's `.flaxproj` (a project declines that channel with `pluginSeed: false`) — and `SettingsService.ApplySeedSources` appends each URL once and records it in `seededUrls`, so removing one does not bring it back (D19). Their `url`s are macro paths — `$(ProjectPath)`, and `$(PluginPath)` = this plugin's folder, found by its own project file, never a folder name (D16) — that `FetchOneAsync` expands: a manifest shipped inside the project, or inside a plugin, is a source like any other, fetched from disk, and still validated by this spec in full. Each source's `sourceId`+`pack.id` are independent — same `id` under different `sourceId` is distinct `InstalledEntry`.
 
 ### 11.7 Invalid cases (each yields `(error)`)
 

@@ -69,6 +69,25 @@ namespace FlaxAssetManager.Core.Services
         /// </summary>
         public string SourcesJsonPath => _sourcesPath;
 
+        /// <summary>Origin label of the plugin's seed channel, so the log says where a source arrived from.</summary>
+        private const string PluginSeedOrigin = "seed_sources.json (plugin)";
+
+        /// <summary>
+        /// Entries of the plugin's own <c>seed_sources.json</c>, read once by
+        /// <see cref="LoadPluginSeedFile"/>; empty when the plugin ships none, when the project opted out
+        /// (<c>Settings.json</c> <c>pluginSeed:false</c>), or when the file was refused.
+        /// </summary>
+        private List<SeedSourceEntry> _pluginSeeds = new List<SeedSourceEntry>();
+
+        /// <summary>
+        /// This plugin's folder, resolved once at load by <see cref="PluginSeedFile"/> - discovered by its
+        /// project file, never by an assumed folder name (D16) - and contained to the open project; it is
+        /// what <c>$(PluginPath)</c> expands to in a source URL. Null when the folder was not found, or
+        /// fell outside the project, in which case the macro expands to nothing and the source reports a
+        /// fetch failure rather than reading outside the project.
+        /// </summary>
+        public string PluginFolderFullPath { get; private set; }
+
         /// <summary>
         /// Absolute path of the generated <c>Content/FlaxAssetManager/ATTRIBUTIONS.md</c>, the list of
         /// every pack this project installed and the license each one came with.
@@ -129,6 +148,12 @@ namespace FlaxAssetManager.Core.Services
 
             // Ensure directories exist for first run
             EnsureDirectories();
+
+            // Resolve this plugin's folder and its seed_sources.json, then apply every seed this project
+            // has not been seeded with yet - the project's own Settings.json list and the plugin's file.
+            // With neither, nothing is written.
+            LoadPluginSeedFile();
+            ApplySeedSources();
         }
 
         private void LoadSources()
@@ -148,11 +173,157 @@ namespace FlaxAssetManager.Core.Services
 
         /// <summary>
         /// Re-reads Sources.json from disk so Refresh picks up externally edited
-        /// source lists without restarting the editor.
+        /// source lists without restarting the editor, then re-applies the <c>Settings.json</c> seed
+        /// list (<see cref="ApplySeedSources"/>), so a seed added or edited by hand takes effect on the
+        /// same Refresh, by the same rule, and is fetched on that Refresh.
         /// </summary>
         public void ReloadSources()
         {
             LoadSources();
+            ApplySeedSources();
+        }
+
+        /// <summary>
+        /// Appends every seed URL this project has not been seeded with yet - from the project's own
+        /// <c>Settings.json</c> <c>seedSources</c>, and from the <c>seed_sources.json</c> the plugin ships
+        /// (<see cref="LoadPluginSeedFile"/>, D19) - so a team that commits a <c>Settings.json</c> gives
+        /// every checkout of the project the same starting manifest sources, a plugin author can ship the
+        /// same starting point with the plugin, and a fresh project has something to browse before anyone
+        /// types a URL. Called from <see cref="Load"/> - so the first fetch of a session already sees the
+        /// seeds - and from <see cref="ReloadSources"/>, the documented apply-on-<b>Refresh</b> path for
+        /// external edits: editing a project's seed list takes effect on the next <b>Refresh</b>, exactly
+        /// like editing <c>Sources.json</c> does.
+        /// <para>
+        /// Each seed URL is applied <b>once</b>, which is what <c>Sources.json</c> <c>seededUrls</c>
+        /// records. That record is the point: a source the user removes - the window's <b>Remove</b>, an
+        /// <b>Edit</b> that renames it, or deleting the line by hand - stays removed, because a seed that
+        /// reappears on every editor start is a source that cannot be removed. A seed whose URL is already
+        /// configured is recorded as applied and its existing entry is left alone (the user's display name
+        /// and enabled flag win); the seed's <c>name</c> and <c>enabled</c> are honoured only when the seed
+        /// creates the entry. URL comparisons are <c>OrdinalIgnoreCase</c>, the way <see cref="AddSource"/>
+        /// and <see cref="RemoveSource"/> compare, so a scheme-casing difference cannot smuggle a duplicate
+        /// back in or hide a removal.
+        /// </para>
+        /// <para>
+        /// A seed names the channel it came from, and each channel stays in its lane: the project's list is
+        /// project config, and the plugin's file names only what its own author publishes: this plugin seeds
+        /// its author's hosted manifest index, and never anyone else's catalog - it advertises no third-party
+        /// source and forces no URL on a project that declines the file (<c>docs/DECISIONS.md</c> D12), which
+        /// <c>pluginSeed:false</c> does in full. Either way a seeded source goes through the same manifest
+        /// validation, size caps and installs-code confirmation as a hand-added URL. A seed installs nothing
+        /// by itself - it makes a source <b>browsable</b>; installs stay explicit.
+        /// </para>
+        /// </summary>
+        /// <returns>How many sources were appended to the list. 0 writes nothing.</returns>
+        public int ApplySeedSources()
+        {
+            // Two seed channels, one rule set: the project's own Settings.json list first (its author's
+            // intent takes the order), then the file the plugin ships. Each entry carries the channel it
+            // came from, so a source says in the log where it arrived from.
+            var seeds = new List<(SeedSourceEntry Entry, string Origin)>();
+            var projectSeeds = Settings?.SeedSources;
+            if (projectSeeds != null)
+                for (int i = 0; i < projectSeeds.Count; i++)
+                    seeds.Add((projectSeeds[i], "Settings.json seedSources"));
+            if (_pluginSeeds != null)
+                for (int i = 0; i < _pluginSeeds.Count; i++)
+                    seeds.Add((_pluginSeeds[i], PluginSeedOrigin));
+
+            if (seeds.Count == 0)
+                return 0;
+
+            if (SourceConfig == null)
+                SourceConfig = new AssetSourceConfig();
+            if (SourceConfig.Sources == null)
+                SourceConfig.Sources = new List<SourceUrlEntry>();
+            if (SourceConfig.SeededUrls == null)
+                SourceConfig.SeededUrls = new List<string>();
+
+            var added = 0;
+            var changed = false;
+            for (int i = 0; i < seeds.Count; i++)
+            {
+                var seed = seeds[i].Entry;
+                var url = seed?.Url?.Trim();
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    // A seed list with a hole in it is a config bug; name the channel and the entry, and
+                    // keep applying the rest rather than abandoning the whole seed over one typo.
+                    Debug.LogWarning($"FlaxAssetManager: ignoring {seeds[i].Origin}[{i}]: no url.");
+                    continue;
+                }
+
+                if (SourceConfig.SeededUrls.Exists(s => string.Equals(s, url, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                SourceConfig.SeededUrls.Add(url);
+                changed = true;
+
+                if (SourceConfig.Sources.Exists(s => string.Equals(s.Url, url, StringComparison.OrdinalIgnoreCase)))
+                {
+                    // Configured by hand, or added before this seed existed: record it as applied so the
+                    // seed never resurrects it once the user removes it, and leave that entry's name alone.
+                    continue;
+                }
+
+                var enabled = seed.Enabled;
+                SourceConfig.Sources.Add(new SourceUrlEntry
+                {
+                    Url = url,
+                    Enabled = enabled,
+                    Name = string.IsNullOrWhiteSpace(seed.Name) ? null : seed.Name.Trim(),
+                });
+                added++;
+                Debug.Log($"FlaxAssetManager: seeded source '{url}' from {seeds[i].Origin}{(enabled ? string.Empty : " (disabled)")}.");
+            }
+
+            // One write for the whole pass, and only when there is something to persist: rewriting
+            // Sources.json on every editor start would dirty a tracked file for every developer.
+            if (changed)
+                SaveSources();
+
+            return added;
+        }
+
+        /// <summary>
+        /// Resolves this plugin's folder and reads the <c>seed_sources.json</c> it ships - the plugin
+        /// author's seed channel (D19). Read <b>once per session</b>, unlike a project's own
+        /// <c>Settings.json</c> seeds, which <see cref="ReloadSources"/> re-reads on every
+        /// <b>Refresh</b>: a plugin's own files do not change under a running editor, so editing the seed
+        /// file takes effect on the next start (which is also what <b>Update Plugin</b> asks for).
+        /// <para>
+        /// The folder is discovered by this plugin's project file and contained to the open project; a
+        /// folder outside the project is reported and neither read nor exposed to <c>$(PluginPath)</c>.
+        /// <c>pluginSeed:false</c> in <c>Settings.json</c> skips the file's entries while leaving
+        /// <c>$(PluginPath)</c> usable, so a project keeps the last word on what registers in its source
+        /// list without losing the ability to name the plugin's own files.
+        /// </para>
+        /// </summary>
+        private void LoadPluginSeedFile()
+        {
+            var found = PluginSeedFile.Read(Globals.ProjectFolder);
+            if (found.Error != null)
+            {
+                // A plugin folder outside the open project: reported, not read, and $(PluginPath) stays
+                // unresolved so no source URL can reach outside the project through the macro.
+                FlaxEngine.Debug.LogWarning($"FlaxAssetManager: plugin folder not used for seeding: {found.Error}");
+            }
+            else
+            {
+                PluginFolderFullPath = found.PluginFolder;
+            }
+
+            if (Settings != null && !Settings.PluginSeed)
+            {
+                Debug.Log("FlaxAssetManager: pluginSeed is false in Settings.json, so the plugin's seed_sources.json is not applied to this project.");
+                return;
+            }
+
+            _pluginSeeds = found.Entries ?? new List<SeedSourceEntry>();
+            if (_pluginSeeds.Count == 0)
+                return;
+
+            Debug.Log($"FlaxAssetManager: plugin seed file '{found.Path}' (found via {found.How}) lists {_pluginSeeds.Count} source(s).");
         }
 
         public void EnsureDirectories()

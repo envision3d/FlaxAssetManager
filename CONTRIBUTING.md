@@ -43,7 +43,7 @@ dotnet build compat/FlaxAssetManager.Compat.csproj -c Development -p:EngineDir=/
 CI runs that same probe on every push and weekly (`compat/README.md`). Keep the tree warning-free.
 
 For manifest work, serve the plugin's own examples over HTTP and add them as a source —
-`AGENTS.md` (→ *Build & Verify*) has the commands for `example_manifest.json`, `example_index.json` and
+`AGENTS.md` (→ *Build & Verify*) has the commands for `docs/example_manifest.json`, `example_index.json` and
 the live-editor end-to-end harness (`FLAX_AM_E2E=1`).
 ### Behaviour probes outside the editor
 
@@ -53,7 +53,7 @@ P/Invoke is absent). Keep them passing when you touch the code they cover:
 
 | Probe | Covers |
 | --- | --- |
-| manifest validation | shipped `example_manifest.json` / `example_index.json` still pass `ValidateManifest`; duplicate `packId` rejected; `..` path forms (including the legitimate `brick..png`) |
+| manifest validation | shipped `docs/example_manifest.json` / `example_index.json` still pass `ValidateManifest`; duplicate `packId` rejected; `..` path forms (including the legitimate `brick..png`) |
 | destination/path checks | `SettingsService.IsValidDestination` and `AssetSourceManager.SanitizeDestination` reject absolute, drive-rooted, traversal, `~`, UNC and `.`-segment paths |
 | network | `HttpStream` refuses an oversize body by declared length and by counted bytes; retries 503/429 up to `MaxAttempts`; honours `Retry-After`; sends `If-None-Match` and reports 304; does **not** retry 404 |
 | git self-update | the update sequence against a real git: `pull --ff-only` fast-forwards a clean checkout and is idempotent when already up to date; a dirty tree, a detached HEAD (`symbolic-ref -q HEAD` → 1) and a missing upstream (`rev-parse --abbrev-ref @{u}` → 128) are detectable **before** any write; a diverged branch exits non-zero and rewrites nothing (HEAD and local commits intact); a folder argument starting with `-` reaches git as a path through `ArgumentList`; a timed-out or cancelled git is killed with its process tree (no hook child survives) |
@@ -153,7 +153,7 @@ Material (needs an editor build; the only part with no automated coverage beyond
 
 ## Manifests, examples and licensing
 
-`example_manifest.json` and `example_index.json` are format demonstrations with `example.com`
+`docs/example_manifest.json` and `example_index.json` are format demonstrations with `example.com`
 placeholders. Keep them placeholder-only: real third-party manifests carry asset licences
 (CC-BY, Apache-2.0, and so on) that must not be redistributed from this repository. End users who
 install assets take on the licence obligations of whoever published them.
